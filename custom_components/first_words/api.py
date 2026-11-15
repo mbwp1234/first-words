@@ -58,6 +58,33 @@ def _changed(hass: HomeAssistant, event: str, word: dict[str, Any], request: web
     async_dispatcher_send(hass, SIGNAL_CHANGED)
 
 
+class _TooBig(Exception):
+    pass
+
+
+async def _read_multipart(request: web.Request) -> tuple[dict[str, Any], bytes | None, str]:
+    """Read `meta` (JSON) and an optional `audio` file, streaming with our own size cap."""
+    meta: dict[str, Any] = {}
+    audio: bytes | None = None
+    ext = "wav"
+    reader = await request.multipart()
+    async for part in reader:
+        if part.name == "meta":
+            meta = json.loads(await part.text())
+        elif part.name == "audio":
+            if part.filename and "." in part.filename:
+                ext = part.filename.rsplit(".", 1)[-1].lower()
+            buf = bytearray()
+            while chunk := await part.read_chunk(65536):
+                buf.extend(chunk)
+                if len(buf) > MAX_AUDIO_BYTES:
+                    raise _TooBig
+            audio = bytes(buf) if buf else None
+    if not isinstance(meta, dict):
+        raise ValueError("meta must be an object")
+    return meta, audio, ext
+
+
 class _View(HomeAssistantView):
     requires_auth = True
 
@@ -87,27 +114,11 @@ class WordsView(_View):
         hass = request.app["hass"]
         try:
             rt = _rt(request)
-            meta: dict[str, Any] = {}
-            audio: bytes | None = None
-            ext = "wav"
-            reader = await request.multipart()
-            async for part in reader:
-                if part.name == "meta":
-                    meta = json.loads(await part.text())
-                elif part.name == "audio":
-                    if part.filename and "." in part.filename:
-                        ext = part.filename.rsplit(".", 1)[-1].lower()
-                    buf = bytearray()
-                    while chunk := await part.read_chunk(65536):
-                        buf.extend(chunk)
-                        if len(buf) > MAX_AUDIO_BYTES:
-                            return web.json_response(
-                                {"error": "That clip is too long. Keep it under a minute."}, status=413)
-                    audio = bytes(buf) if buf else None
-            if not isinstance(meta, dict):
-                return web.json_response({"error": "Bad request."}, status=400)
+            meta, audio, ext = await _read_multipart(request)
             word, created = await hass.async_add_executor_job(
                 rt.store.create, meta, _user_name(request), audio, ext)
+        except _TooBig:
+            return web.json_response({"error": "That clip is too long. Keep it under a minute."}, status=413)
         except (ValueError, json.JSONDecodeError):
             return web.json_response({"error": "Bad request."}, status=400)
         except Exception as err:  # noqa: BLE001
@@ -166,6 +177,24 @@ class AudioView(_FileView):
     url = API_BASE + "/audio/{word_id}"
     name = "api:first_words:audio"
     kind = "audio"
+
+    async def post(self, request: web.Request, word_id: str) -> web.Response:
+        """Attach a clip to an existing word. multipart: `meta` (clipStart/clipEnd) + `audio`."""
+        hass = request.app["hass"]
+        try:
+            meta, audio, ext = await _read_multipart(request)
+            if audio is None:
+                return web.json_response({"error": "There's no recording to save."}, status=400)
+            word = await hass.async_add_executor_job(
+                _rt(request).store.attach_audio, word_id, audio, ext, meta.get("clipStart"), meta.get("clipEnd"))
+        except _TooBig:
+            return web.json_response({"error": "That clip is too long. Keep it under a minute."}, status=413)
+        except (ValueError, AttributeError):
+            return web.json_response({"error": "Bad request."}, status=400)
+        except Exception as err:  # noqa: BLE001
+            return _err(err)
+        _changed(hass, EVENT_UPDATED, word, request)
+        return self.json(word)
 
 
 class VideoView(_FileView):

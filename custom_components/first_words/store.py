@@ -342,6 +342,37 @@ class WordStore:
             self._write(data)
             return w
 
+    def attach_audio(self, word_id: str, audio: bytes, audio_ext: str = "wav",
+                     clip_start: Any = None, clip_end: Any = None) -> dict[str, Any]:
+        """Give an existing word its clip (a word written down first, captured later).
+
+        A clip it already had is moved to .trash, never overwritten.
+        """
+        if not audio:
+            raise BadRequest("There's no recording to save.")
+        if len(audio) > MAX_AUDIO_BYTES:
+            raise BadRequest("That clip is too long. Keep it under a minute.")
+        audio_ext = str(audio_ext or "wav").lower()
+        if audio_ext not in AUDIO_EXTS:
+            audio_ext = "wav"
+        with self._lock:
+            self.check_ready()
+            data = self._read()
+            w = self._find(data["words"], word_id)
+            if not w:
+                raise NotFound("That word was not found. Pull down to refresh.")
+            if w.get("audioFile") and (self.root / w["audioFile"]).exists():
+                dest = self._trash(w, "replaced-audio")
+                shutil.move(str(self.root / w["audioFile"]), str(dest / Path(w["audioFile"]).name))
+            rel = self._unique(AUDIO_DIR, file_stem(w), audio_ext)
+            self._atomic_write_bytes(self.root / rel, audio)
+            w["audioFile"] = rel
+            w["clipStart"] = _num(clip_start)
+            w["clipEnd"] = _num(clip_end)
+            w["capturedAt"] = _now_iso()
+            self._write(data)
+            return w
+
     def delete(self, word_id: str) -> str:
         """Move the word's files and its record into .trash. Returns the trash folder."""
         with self._lock:

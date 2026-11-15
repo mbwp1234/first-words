@@ -18,8 +18,17 @@ window.fakeHass = {
 </script>
 <script src="/first_words_panel"></script>
 <script>
+var q = new URLSearchParams(location.search);
+var headerH = +(q.get('top') || 0), side = +(q.get('side') || 0);
+document.body.style.overflow = 'hidden';
+if (headerH) { var bar = document.createElement('div'); bar.style.cssText = 'height:' + headerH + 'px;background:#111'; document.body.appendChild(bar); }
+var wrap = document.createElement('div');
+wrap.style.cssText = side ? 'display:flex' : '';
+if (side) { var sb = document.createElement('div'); sb.style.cssText = 'width:' + side + 'px;flex:0 0 ' + side + 'px;background:#1c1c1c'; wrap.appendChild(sb); }
 var el = document.createElement('first-words-panel');
-el.hass = fakeHass; el.narrow = true;
-document.body.appendChild(el);
+el.hass = fakeHass; el.narrow = !side;
+el.style.flex = '1'; el.style.minWidth = '0';
+wrap.appendChild(el);
+document.body.appendChild(wrap);
 </script>
 </body></html>

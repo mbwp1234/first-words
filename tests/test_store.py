@@ -331,3 +331,31 @@ def test_import_own_export_roundtrip(ws, tmp_path):
     other = store.WordStore(cfg, today=lambda: TODAY)
     counts = other.import_json(str(ws.export_file(name)))
     assert counts["imported"] == 1 and counts["clips"] == 1
+
+
+# ---------------------------------------------------------------- write it down now, capture it later
+
+def test_attach_audio_to_word_without_one(ws):
+    w, _ = ws.create({"word": "ball", "date": "2026-11-10"}, "x")
+    assert w["audioFile"] == ""
+    out = ws.attach_audio(w["id"], b"RIFFclip", "wav", "1.234", 2.5)
+    assert out["audioFile"] == "audio/2026-11-10_ball.wav"
+    assert (ws.root / out["audioFile"]).read_bytes() == b"RIFFclip"
+    assert out["clipStart"] == 1.23 and out["clipEnd"] == 2.5 and out["capturedAt"]
+    assert data(ws)["words"][0]["audioFile"] == out["audioFile"]
+
+
+def test_attach_audio_trashes_previous_clip(ws):
+    w, _ = ws.create({"word": "ball", "date": "2026-11-10"}, "x", b"old")
+    out = ws.attach_audio(w["id"], b"new", "m4a")
+    assert (ws.root / out["audioFile"]).read_bytes() == b"new"
+    assert [p.read_bytes() for p in (ws.root / ".trash").rglob("*.wav")] == [b"old"]
+
+
+def test_attach_audio_validates(ws):
+    w, _ = ws.create({"word": "ball"}, "x")
+    with pytest.raises(store.BadRequest):
+        ws.attach_audio(w["id"], b"")
+    with pytest.raises(store.NotFound):
+        ws.attach_audio("nope", b"x")
+    assert ws.attach_audio(w["id"], b"x", "exe")["audioFile"].endswith(".wav")

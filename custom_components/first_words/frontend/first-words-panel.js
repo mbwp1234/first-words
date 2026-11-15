@@ -13,7 +13,7 @@
 'use strict';
 if (customElements.get('first-words-panel')) return;
 
-var VERSION = '0.1.0';
+var VERSION = '0.2.0';
 
 var CSS = [
 ':host{',
@@ -23,18 +23,18 @@ var CSS = [
 '  --teal-soft:#DDEFEA; --teal-ink:#1F5A4E; --blue-soft:#E4E8F6; --blue-ink:#2D3E7A;',
 '  --danger:#A3261B;',
 '  --display:"Bricolage Grotesque",system-ui,sans-serif;',
-'  --safe-b:env(safe-area-inset-bottom,0px); --safe-t:env(safe-area-inset-top,0px);',
-'  display:block;position:relative;height:100vh;height:100dvh;overflow:hidden;transform:translateZ(0);',
+'  --safe-b:env(safe-area-inset-bottom,0px);',
+'  display:block;position:relative;height:calc(100vh - var(--fw-top,0px));height:calc(100dvh - var(--fw-top,0px));overflow:hidden;transform:translateZ(0);',
 '  background:var(--bg);color:var(--ink);color-scheme:light;',
 '}',
 '*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}',
-'.scroller{height:100%;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 Inter,system-ui,-apple-system,sans-serif;padding-top:var(--safe-t)}',
+'.scroller{height:100%;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 Inter,system-ui,-apple-system,sans-serif}',
 'button,input,textarea{font:inherit;color:inherit}',
 'button{cursor:pointer}',
 'a{color:var(--ink)}',
 '[hidden]{display:none!important}',
 '.app{max-width:520px;margin:0 auto;min-height:100%;position:relative}',
-'.view{padding-bottom:calc(120px + var(--safe-b))}',
+'.view{padding-bottom:calc(150px + var(--safe-b))}',
 '.topbar{display:flex;align-items:center;gap:8px;padding:16px 12px 8px}',
 '.topbar h1{margin:0;font:800 22px/1.1 var(--display);flex:1}',
 '.icon-btn{width:44px;height:44px;border-radius:22px;border:none;background:transparent;display:flex;align-items:center;justify-content:center;flex:0 0 44px}',
@@ -42,7 +42,7 @@ var CSS = [
 '.icon-btn svg{width:22px;height:22px}',
 '.eyebrow{font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}',
 '.sub{font-size:14px;color:var(--muted)}',
-'.hero{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:28px 24px 8px}',
+'.hero{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:20px 24px 8px}',
 '.hero h1{margin:2px 0;font:800 34px/1.05 var(--display)}',
 '.hero .lead{display:flex;align-items:flex-start;gap:4px;min-width:0}',
 '.menu{margin:-6px 0 0 -14px;color:var(--ink)}',
@@ -76,6 +76,15 @@ var CSS = [
 '.cta.dark{background:var(--ink);color:#fff;height:56px}',
 '.cta:disabled{opacity:.6}',
 '.helper{font-size:12px;color:var(--muted);text-align:center}',
+'.quick{height:44px;border:none;background:none;font-size:15px;font-weight:600;color:var(--ink);text-decoration:underline;text-underline-offset:3px}',
+'.play.cap{background:var(--gold-soft)}',
+'.play.cap svg{fill:none;stroke:var(--gold-ink);width:20px;height:20px}',
+'.capture{display:flex;align-items:center;gap:12px;background:var(--bg);border:none;border-radius:20px;padding:10px 14px 10px 10px;text-align:left;width:100%;color:var(--ink)}',
+'.capture .pbtn svg{fill:none;stroke:var(--ink);width:22px;height:22px}',
+'.capture .tx{display:flex;flex-direction:column;gap:2px;min-width:0}',
+'.capture b{font-size:16px;font-weight:600}',
+'.capture small{font-size:13px;color:var(--muted)}',
+'.form.attach>:not(#keep-wrap){display:none!important}',
 '',
 '/* clip card */',
 '.clip{margin:4px 16px 0;background:var(--ink);color:#fff;border-radius:24px;padding:20px;display:flex;flex-direction:column;align-items:center;gap:14px}',
@@ -157,12 +166,28 @@ var CSS = [
 '.dlg h2{margin:0;font:800 20px var(--display)}',
 '.danger{height:48px;border-radius:14px;border:1px solid #E5C4C0;background:#fff;color:var(--danger);font-weight:600}',
 '.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(110px + var(--safe-b));background:var(--ink);color:#fff;padding:12px 16px;border-radius:14px;font-size:14px;max-width:calc(100% - 32px);z-index:20;box-shadow:0 6px 24px rgba(0,0,0,.2);font-family:Inter,system-ui,sans-serif}',
-'.upbar{position:fixed;left:12px;right:12px;top:calc(12px + var(--safe-t));z-index:15;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:12px 14px;box-shadow:0 6px 24px rgba(0,0,0,.12);display:flex;flex-direction:column;gap:8px;font-size:14px;max-width:496px;margin:0 auto;font-family:Inter,system-ui,sans-serif}',
+'.upbar{position:fixed;left:12px;right:12px;top:12px;z-index:15;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:12px 14px;box-shadow:0 6px 24px rgba(0,0,0,.12);display:flex;flex-direction:column;gap:8px;font-size:14px;max-width:496px;margin:0 auto;font-family:Inter,system-ui,sans-serif}',
 '.upbar .bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden}',
 '.upbar .bar i{display:block;height:100%;width:0;background:var(--gold);transition:width .3s}',
 '.upbar .row{display:flex;justify-content:space-between;align-items:center;gap:8px}',
 '.spin{width:22px;height:22px;border:3px solid #4A5A73;border-top-color:var(--gold);border-radius:50%;animation:sp 1s linear infinite}',
-'@keyframes sp{to{transform:rotate(360deg)}}'
+'@keyframes sp{to{transform:rotate(360deg)}}',
+'',
+'/* wide: a laptop, beside HA\'s sidebar. Sized by the panel\'s own width, not the window\'s. */',
+'.scroller{container-type:inline-size;container-name:fw}',
+'@container fw (min-width: 760px){',
+'  .app{max-width:none}',
+'  #v-list{max-width:1040px;margin:0 auto}',
+'  #v-add,#v-detail,#v-saved{max-width:600px;margin:0 auto}',
+'  .hero{padding:32px 32px 8px}',
+'  .month{margin:24px 32px 10px}',
+'  .words{margin:0 24px;display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:10px}',
+'  .banner{margin:8px 24px 0}',
+'  .wcard:hover{border-color:var(--line2)}',
+'  .empty{max-width:520px;margin:64px auto}',
+'  .bottombar .inner{max-width:420px}',
+'  .dword{font-size:88px}',
+'}'
 ].join('\n');
 
 var I_MIC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg>';
@@ -190,15 +215,16 @@ var HTML = [
 '    <div id="list"></div>',
 '    <div class="bottombar"><div class="inner">',
 '      <button class="cta" type="button" data-go="add">' + I_MIC + '<span id="cta-label">Said something new</span></button>',
+'      <button class="quick" type="button" data-go="quick">Just add a word · record it later</button>',
 '    </div></div>',
 '  </section>',
 
 '  <section id="v-add" class="view" hidden>',
 '    <div class="topbar">',
 '      <button class="icon-btn" type="button" id="add-close" aria-label="Close">' + I_X + '</button>',
-'      <h1>New word</h1>',
+'      <h1 id="add-title">New word</h1>',
 '    </div>',
-'    <div class="clip">',
+'    <div class="clip" id="clip-card">',
 '      <div id="c-empty" style="display:flex;flex-direction:column;align-items:center;gap:14px">',
 '        <span class="status">Catch it while it\'s fresh</span>',
 '        <button class="recbtn" type="button" id="rec-start" aria-label="Start recording">',
@@ -238,7 +264,7 @@ var HTML = [
 '        <span class="tiny" id="trim-hint">Drag the gold edges to keep just the word</span>',
 '      </div>',
 '    </div>',
-'    <div class="form">',
+'    <div class="form" id="add-form">',
 '      <label class="field"><span id="f-word-lbl">What did they say?</span>',
 '        <input id="f-word" class="big" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="60">',
 '      </label>',
@@ -284,6 +310,10 @@ var HTML = [
 '        <canvas id="d-wave" aria-hidden="true"></canvas>',
 '        <span class="t" id="d-time"></span>',
 '      </div>',
+'      <button class="capture" type="button" id="d-capture" hidden>',
+'        <span class="pbtn" aria-hidden="true">' + I_MIC + '</span>',
+'        <span class="tx"><b>Capture it</b><small id="d-capture-sub">Record it, or pull it from a video</small></span>',
+'      </button>',
 '      <dl class="facts">',
 '        <div><dt>Date</dt><dd id="d-date"></dd></div>',
 '        <div><dt>Heard by</dt><dd id="d-heard"></dd></div>',
@@ -657,7 +687,8 @@ function show(v) {
 function go(v) {
   stopPlay();
   stopDetailVideo();
-  if (v === 'add') return openAdd();
+  if (v === 'add') return openAdd('new');
+  if (v === 'quick') return openAdd('quick');
   if (v === 'saved') { renderSaved(); return show('saved'); }
   if (v === 'list') { leaveAdd(); renderList(); return show('list'); }
 }
@@ -675,14 +706,18 @@ function onResize() {
 function onVisible() {
   if (document.visibilityState !== 'visible') return;
   flushQueue();
-  if (S.loaded && S.view === 'list') refresh();
+  if (!S.synced || (S.loaded && S.view === 'list')) refresh();
 }
-function onOnline() { flushQueue(); }
+function onOnline() { flushQueue(); if (!S.synced) refresh(); }
 window.addEventListener('beforeunload', onBeforeUnload);
 window.addEventListener('resize', onResize);
 window.addEventListener('online', onOnline);
 document.addEventListener('visibilitychange', onVisible);
-var flushTimer = setInterval(function () { if (S.pending.length && document.visibilityState === 'visible') flushQueue(); }, 60000);
+var flushTimer = setInterval(function () {
+  if (document.visibilityState !== 'visible') return;
+  if (S.pending.length) flushQueue();
+  else if (!S.synced) refresh();
+}, 30000);
 
 /* ================================================================ boot */
 function me() {
@@ -694,6 +729,7 @@ function me() {
   })[0] || null;
 }
 function applyBootstrap(r) {
+  S.synced = true;
   C = r.config || C;
   S.words = (r.words || []).slice();
   S.storage = r.storage || null;
@@ -704,7 +740,7 @@ function applyBootstrap(r) {
   $('cta-label').textContent = C.child + ' said something new';
   $('f-word-lbl').textContent = 'What did ' + C.child + ' say?';
   $('d-age-lbl').textContent = C.child + "'s age";
-  $('save-helper').textContent = 'Saves to ' + nas() + (C.offsite ? ' · ' + C.offsite : '');
+  $('save-helper').textContent = saveHelper();
 }
 function boot() {
   $('list-title').textContent = '';
@@ -726,6 +762,7 @@ function refresh() {
   return req('GET', '/words').then(function (r) {
     applyBootstrap(r);
     if (S.view === 'list') renderList();
+    else if (S.view === 'detail' && byId(S.current)) renderDetail();
   }).catch(function () {});
 }
 
@@ -751,7 +788,7 @@ function renderBanner() {
     b.className = 'banner'; b.textContent = st.error; b.hidden = false;
   } else if (n) {
     b.className = 'banner info';
-    b.textContent = n + (n === 1 ? ' word is' : ' words are') + ' saved on this phone, waiting to upload.';
+    b.textContent = n + (n === 1 ? ' item is' : ' items are') + ' saved on this phone, waiting to upload.';
     b.hidden = false;
   } else {
     b.hidden = true;
@@ -764,7 +801,7 @@ function renderList() {
   var n = S.words.length;
   $('list-sub').textContent = n ? n + (n === 1 ? ' word' : ' words') + ' so far · newest first' : 'No words yet';
   if (!n) {
-    list.innerHTML = '<div class="empty"><strong>Listening…</strong>When ' + esc(C.child || 'they') + ' says a word, tap the button below. You can record it, or pull the sound from a video.</div>';
+    list.innerHTML = '<div class="empty"><strong>Listening…</strong>When ' + esc(C.child || 'they') + ' says a word, tap the button below to record it or pull the sound from a video. Words from before? Use “Just add a word” and capture them later.</div>';
     return;
   }
   var first = firstWordId(), html = '', month = '';
@@ -775,13 +812,15 @@ function renderList() {
       html += '<h2 class="month">' + esc(m) + '</h2><ul class="words">';
       month = m;
     }
-    var len = clipLen(w), au = hasAudio(w);
+    var len = clipLen(w), au = hasAudio(w), cap = !au && !w._pending;
     var meta = fmtDate(w.date, { month: 'short', day: 'numeric' }) + ' · ' +
-      (au ? (len ? clock(len) + ' clip' : 'clip') : 'no audio') + (w.videoFile || w._video ? ' · video' : '');
+      (au ? (len ? clock(len) + ' clip' : 'clip') : 'no clip yet') + (w.videoFile || w._video ? ' · video' : '');
     var c0 = C.people[0] && w.heardBy === C.people[0].label ? ' c0' : '';
     html += '<li class="wcard">' +
-      '<button type="button" class="play' + (au ? '' : ' off') + '" data-play="' + esc(w.id) + '" aria-label="' +
-        (au ? 'Play ' + esc(w.word) : 'No recording for ' + esc(w.word)) + '"' + (au ? '' : ' disabled') + '>' + PLAY_SVG + '</button>' +
+      (cap
+        ? '<button type="button" class="play cap" data-capture="' + esc(w.id) + '" aria-label="Capture ' + esc(w.word) + '">' + I_MIC + '</button>'
+        : '<button type="button" class="play' + (au ? '' : ' off') + '" data-play="' + esc(w.id) + '" aria-label="' +
+          (au ? 'Play ' + esc(w.word) : 'No recording for ' + esc(w.word)) + '"' + (au ? '' : ' disabled') + '>' + PLAY_SVG + '</button>') +
       '<button type="button" class="wopen" data-open="' + esc(w.id) + '">' +
         '<span class="wtext"><span class="wword">' + esc(w.word) + '</span><span class="wmeta">' + esc(meta) + '</span></span>' +
         (w._pending ? '<span class="chip pending">On this phone</span>' : '') +
@@ -793,6 +832,8 @@ function renderList() {
   list.innerHTML = html;
 }
 $('list').addEventListener('click', function (e) {
+  var cb = e.target.closest('[data-capture]');
+  if (cb) { stopPlay(); openAdd('attach', cb.getAttribute('data-capture')); return; }
   var pb = e.target.closest('[data-play]');
   if (pb) {
     var id = pb.getAttribute('data-play');
@@ -826,21 +867,37 @@ function replaceWord(w) {
 }
 
 /* ================================================================ add: form */
-function openAdd() {
+/* kind: 'new' (record or trim, then the details), 'quick' (details only; capture later),
+ * 'attach' (a clip for a word that was written down earlier). */
+function openAdd(kind, wordId) {
   resetClip();
+  var w = kind === 'attach' ? byId(wordId) : null;
+  if (kind === 'attach' && !w) kind = 'new';
+  A.kind = kind; A.target = w ? w.id : null;
   $('f-word').value = ''; $('f-sounded').value = ''; $('f-notes').value = '';
   $('f-date').value = todayStr(); $('f-date').max = todayStr();
   var p = me();
   A.heard = p ? p.label : (C.people[0] ? C.people[0].label : '');
   $('f-heard-other').value = ''; renderHeard();
+  $('add-title').textContent = kind === 'quick' ? 'Add a word' : kind === 'attach' ? 'Capture “' + w.word + '”' : 'New word';
+  $('clip-card').hidden = kind === 'quick';
+  $('add-form').classList.toggle('attach', kind === 'attach');
+  $('save').textContent = kind === 'attach' ? 'Save recording' : 'Save word';
+  $('save-helper').textContent = kind === 'quick' ? 'Add the recording later from the word\'s page'
+    : kind === 'attach' ? 'Adds the clip to “' + w.word + '” from ' + fmtDate(w.date, { month: 'short', day: 'numeric' })
+    : saveHelper();
   show('add');
 }
+function saveHelper() { return 'Saves to ' + nas() + (C.offsite ? ' · ' + C.offsite : ''); }
 function leaveAdd() {
   stopRec(true);
   stopPreview();
   if (S.view === 'add') resetClip();
 }
-$('add-close').addEventListener('click', function () { go('list'); });
+$('add-close').addEventListener('click', function () {
+  if (A.kind === 'attach' && A.target && byId(A.target)) { var id = A.target; leaveAdd(); openDetail(id); return; }
+  go('list');
+});
 function renderHeard() {
   var labels = C.people.map(function (p) { return p.label; }).concat(['Other']);
   var other = labels.indexOf(A.heard) === -1 || A.heard === 'Other';
@@ -1296,13 +1353,61 @@ function postWord(meta, audio, ext) {
   if (audio) fd.append('audio', audio, 'clip.' + (ext || 'wav'));
   return req('POST', '/words', fd);
 }
+function postAudio(wordId, meta, audio, ext) {
+  var fd = new FormData();
+  fd.append('meta', JSON.stringify(meta));
+  fd.append('audio', audio, 'clip.' + (ext || 'wav'));
+  return req('POST', '/audio/' + encodeURIComponent(wordId), fd);
+}
+function saveAttach() {
+  var c = A.clip, id = A.target, w0 = byId(id);
+  if (!c) { toast('Record it, or pick a video or voice memo first.'); return; }
+  if (recState) { toast('Stop the recording first.'); return; }
+  getCtx();
+  stopPreview();
+  var btn = $('save');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  var meta = { clipStart: Math.round(c.start * 100) / 100, clipEnd: Math.round(c.end * 100) / 100 };
+  var video = c.isVideo && $('f-keep').checked ? c.blob : null;
+  var out = null;
+  exportClip().then(function (audio) {
+    out = audio;
+    return postAudio(id, meta, audio.blob, audio.ext);
+  }).then(function (w) {
+    clipCache.delete(w.id);
+    cacheLocalClip(w, c);
+    replaceWord(w);
+    resetClip();
+    openDetail(w.id);
+    toast('Captured “' + w.word + '”');
+    if (video) uploadVideo(video, w.id);
+  }).catch(function (e) {
+    if (!e.retryable || !out) { toast(e.message || 'Could not save. Try again.', 5000); return; }
+    var item = { key: 'c_' + id, type: 'clip', wordId: id, meta: meta, audio: out.blob, ext: out.ext,
+      video: video, queuedAt: new Date().toISOString() };
+    return Q.put(item).then(function () {
+      S.pending = S.pending.filter(function (x) { return x.key !== item.key; }).concat([item]);
+      var w = Object.assign({}, w0, { _audio: item.audio, _clipPending: true, clipStart: meta.clipStart, clipEnd: meta.clipEnd });
+      clipCache.delete(id);
+      cacheLocalClip(w, c);
+      replaceWord(w);
+      resetClip();
+      openDetail(id);
+      toast(e.offline ? 'Saved on this phone. Will upload when home.'
+        : 'Saved on this phone. Will upload when ' + nas() + ' is back.', 5000);
+    }, function () {
+      toast("Couldn't save, and this phone couldn't hold it either. Try again in a moment.", 6000);
+    });
+  }).then(function () { btn.disabled = false; btn.textContent = 'Save recording'; });
+}
 $('save').addEventListener('click', function () {
+  if (A.kind === 'attach') { saveAttach(); return; }
   var word = $('f-word').value.trim();
   if (!word) { $('f-word').focus(); toast('Type the word ' + (C.child || 'they') + ' said.'); return; }
   if (recState) { toast('Stop the recording first.'); return; }
   getCtx();
   stopPreview();
-  var btn = $('save'), c = A.clip;
+  var btn = $('save'), c = A.kind === 'quick' ? null : A.clip;
   btn.disabled = true; btn.textContent = 'Saving…';
   var meta = {
     id: uuid(),
@@ -1364,8 +1469,14 @@ function pendingWord(item) {
 }
 function mergePending() {
   S.pending.forEach(function (item) {
-    if (item.type !== 'word') return;
-    if (!byId(item.meta.id)) S.words.push(pendingWord(item));
+    if (item.type === 'word' && !byId(item.meta.id)) S.words.push(pendingWord(item));
+    if (item.type === 'clip') {
+      var w = byId(item.wordId);
+      if (w && !w.audioFile) {
+        w._audio = item.audio; w._clipPending = true;
+        w.clipStart = item.meta.clipStart; w.clipEnd = item.meta.clipEnd;
+      }
+    }
   });
   sortWords();
 }
@@ -1395,6 +1506,27 @@ function flushQueue() {
           toast('“' + item.meta.word + '” could not upload: ' + e.message, 6000);
         });
       }
+      if (item.type === 'clip') {
+        return postAudio(item.wordId, item.meta, item.audio, item.ext).then(function (w) {
+          clipCache.delete(w.id);
+          return Q.del(item.key).then(function () {
+            S.pending = S.pending.filter(function (x) { return x.key !== item.key; });
+            replaceWord(w);
+            if (item.video) {
+              var v = { key: 'v_' + w.id, type: 'video', wordId: w.id, video: item.video, queuedAt: item.queuedAt };
+              return Q.put(v).catch(function () {}).then(function () { S.pending.push(v); });
+            }
+          });
+        }, function (e) {
+          if (e.retryable) throw e;
+          if (e.status === 404) {  // the word was deleted meanwhile: nothing to attach to
+            return Q.del(item.key).then(function () {
+              S.pending = S.pending.filter(function (x) { return x.key !== item.key; });
+            });
+          }
+          toast('A recording could not upload: ' + e.message, 6000);
+        });
+      }
       if (item.type === 'video' && !S.upload) {
         return new Promise(function (resolve) {
           uploadVideo(item.video, item.wordId, item.token, resolve);
@@ -1406,6 +1538,7 @@ function flushQueue() {
   }, function () { /* still unreachable; try again later */ }).then(function () {
     flushing = null;
     renderBanner();
+    if (!S.synced) refresh();
   });
   return flushing;
 }
@@ -1508,6 +1641,8 @@ function renderDetail() {
   $('d-sound').textContent = w.sounded ? 'sounded like “' + w.sounded + '”' : '';
   $('d-sound').hidden = !w.sounded;
   $('d-player').hidden = !hasAudio(w);
+  $('d-capture').hidden = hasAudio(w) || !!w._pending;
+  $('d-capture-sub').textContent = 'Record it next time you hear it, or pull it from a video';
   var len = clipLen(w);
   $('d-time').textContent = len ? clock(len) : '';
   setPlayIcon($('d-play'), false);
@@ -1521,8 +1656,8 @@ function renderDetail() {
   $('d-notes-wrap').hidden = !w.notes;
   $('d-edit').hidden = !!w._pending;
   var folder = (S.storage && S.storage.path ? S.storage.path.split('/').pop() : 'First Words');
-  if (w._pending) {
-    $('d-saved-title').textContent = 'Saved on this phone';
+  if (w._pending || w._clipPending) {
+    $('d-saved-title').textContent = w._pending ? 'Saved on this phone' : 'Recording saved on this phone';
     $('d-audio-name').textContent = 'Uploads to ' + nas() + ' when Home Assistant is reachable';
   } else {
     $('d-saved-title').textContent = 'Saved on ' + nas();
@@ -1547,6 +1682,10 @@ function drawDetailWave(frac) {
   paint(null);
   if (entryP) entryP.then(function (e) { if (S.current === w.id) paint(e.peaks); }).catch(function () {});
 }
+$('d-capture').addEventListener('click', function () {
+  var w = byId(S.current);
+  if (w) openAdd('attach', w.id);
+});
 $('d-play').addEventListener('click', function () {
   var w = byId(S.current);
   if (!w || !hasAudio(w)) return;
@@ -1696,8 +1835,20 @@ class FirstWordsPanel extends HTMLElement {
   set panel(p) { this._panel = p; }
   set route(r) { this._route = r; }
   connectedCallback() { if (!this._app && this._hass) this._start(); }
-  disconnectedCallback() { if (this._app) { this._app.destroy(); this._app = null; this.shadowRoot.innerHTML = ''; } }
+  disconnectedCallback() {
+    if (this._onFit) window.removeEventListener('resize', this._onFit);
+    if (this._app) { this._app.destroy(); this._app = null; this.shadowRoot.innerHTML = ''; }
+  }
+  _fit() {
+    var top = Math.max(0, Math.round(this.getBoundingClientRect().top));
+    if (top !== this._top) { this._top = top; this.style.setProperty('--fw-top', top + 'px'); }
+  }
   _start() {
+    var self = this;
+    this._onFit = this._onFit || function () { self._fit(); };
+    window.addEventListener('resize', this._onFit);
+    requestAnimationFrame(this._onFit);
+    setTimeout(this._onFit, 300);
     ensureFonts();
     var root = this.shadowRoot || this.attachShadow({ mode: 'open' });
     root.innerHTML = '<style>' + CSS + '</style>' + HTML;
