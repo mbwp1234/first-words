@@ -254,15 +254,24 @@ def main() -> int:
         pg.screenshot(path=str(OUT / "s14_quick_add.png"))
         check("quick add hides the recorder", pg.eval_on_selector("#clip-card", "e=>e.hidden"))
         check("quick add title", pg.inner_text("#add-title") == "Add a word")
+        check("who-heard offers Mama, Dada, Both, Other",
+              [pg.locator("#heard-seg button").nth(i).inner_text() for i in range(pg.locator("#heard-seg button").count())]
+              == ["Mama", "Dada", "Both", "Other"])
+        check("all four fit on one row at phone width",
+              len({round(pg.locator("#heard-seg button").nth(i).bounding_box()["y"]) for i in range(4)}) == 1)
+        pg.click('[data-heard="Both"]')
+        check("Both is selected", pg.get_attribute('[data-heard="Both"]', "aria-pressed") == "true")
         pg.fill("#f-word", "ball"); pg.fill("#f-date", "2026-11-02"); pg.click("#save")
         pg.wait_for_selector("#v-detail:not([hidden])", timeout=10000); pg.wait_for_timeout(300)
         qball = next(w for w in json.loads((root / "first-words.json").read_text())["words"] if w["date"] == "2026-11-02")
         check("quick word saved with no clip", qball["audioFile"] == "")
+        check("Both saved as 'Mama & Dada'", qball["heardBy"] == "Mama & Dada")
         check("detail offers Capture it", pg.eval_on_selector("#d-capture", "e=>!e.hidden")
               and pg.eval_on_selector("#d-player", "e=>e.hidden"))
         pg.screenshot(path=str(OUT / "s13_detail_capture.png"))
         pg.click("#v-detail [data-go='list']"); pg.wait_for_timeout(200)
         check("list shows a mic for it", pg.locator(f'[data-capture="{qball["id"]}"]').count() == 1)
+        check("Both chip on the list", pg.locator(f'[data-open="{qball["id"]}"] .chip.both').inner_text() == "Mama & Dada")
         check("its line says no clip yet", "no clip yet" in pg.inner_text(f'[data-open="{qball["id"]}"]'))
         pg.screenshot(path=str(OUT / "s11_list_to_capture.png"))
         metas = [pg.locator(".wmeta").nth(i).bounding_box()["height"] for i in range(pg.locator(".wmeta").count())]

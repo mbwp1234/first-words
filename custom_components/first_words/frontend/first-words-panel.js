@@ -13,7 +13,7 @@
 'use strict';
 if (customElements.get('first-words-panel')) return;
 
-var VERSION = '0.2.0';
+var VERSION = '0.2.1';
 
 var CSS = [
 ':host{',
@@ -63,6 +63,7 @@ var CSS = [
 '.wmeta{font-size:13px;color:var(--muted)}',
 '.chip{font-size:12px;font-weight:600;padding:5px 10px;border-radius:999px;white-space:nowrap;background:var(--blue-soft);color:var(--blue-ink)}',
 '.chip.c0{background:var(--teal-soft);color:var(--teal-ink)}',
+'.chip.both{background:linear-gradient(90deg,var(--teal-soft),var(--blue-soft));color:var(--ink)}',
 '.chip.first{background:var(--gold-soft);color:var(--gold-ink)}',
 '.chip.pending{background:#EFEDE8;color:var(--label)}',
 '.empty{margin:48px 32px;text-align:center;color:var(--muted)}',
@@ -815,7 +816,7 @@ function renderList() {
     var len = clipLen(w), au = hasAudio(w), cap = !au && !w._pending;
     var meta = fmtDate(w.date, { month: 'short', day: 'numeric' }) + ' · ' +
       (au ? (len ? clock(len) + ' clip' : 'clip') : 'no clip yet') + (w.videoFile || w._video ? ' · video' : '');
-    var c0 = C.people[0] && w.heardBy === C.people[0].label ? ' c0' : '';
+    var c0 = C.people[0] && w.heardBy === C.people[0].label ? ' c0' : (bothLabel() && w.heardBy === bothLabel() ? ' both' : '');
     html += '<li class="wcard">' +
       (cap
         ? '<button type="button" class="play cap" data-capture="' + esc(w.id) + '" aria-label="Capture ' + esc(w.word) + '">' + I_MIC + '</button>'
@@ -898,8 +899,14 @@ $('add-close').addEventListener('click', function () {
   if (A.kind === 'attach' && A.target && byId(A.target)) { var id = A.target; leaveAdd(); openDetail(id); return; }
   go('list');
 });
+/* "Both" = every person heard it, stored readably as e.g. "Mama & Dada". */
+function bothLabel() {
+  if (C.people.length < 2) return '';
+  var l = C.people.map(function (p) { return p.label; });
+  return l.length === 2 ? l[0] + ' & ' + l[1] : l.slice(0, -1).join(', ') + ' & ' + l[l.length - 1];
+}
 function renderHeard() {
-  var labels = C.people.map(function (p) { return p.label; }).concat(['Other']);
+  var labels = C.people.map(function (p) { return p.label; }).concat(bothLabel() ? ['Both'] : []).concat(['Other']);
   var other = labels.indexOf(A.heard) === -1 || A.heard === 'Other';
   $('heard-seg').style.gridTemplateColumns = 'repeat(' + Math.min(labels.length, 4) + ',minmax(0,1fr))';
   $('heard-seg').innerHTML = labels.map(function (l) {
@@ -916,6 +923,7 @@ $('heard-seg').addEventListener('click', function (e) {
   if (A.heard === 'Other') $('f-heard-other').focus();
 });
 function heardValue() {
+  if (A.heard === 'Both' && bothLabel()) return bothLabel();
   if (A.heard === 'Other' || C.people.every(function (p) { return p.label !== A.heard; })) {
     return $('f-heard-other').value.trim() || 'Other';
   }
