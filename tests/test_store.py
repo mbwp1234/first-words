@@ -372,3 +372,36 @@ def test_dispatcher_handlers_are_callbacks():
         assert not t.startswith("lambda"), t
         name = t.split(".")[-1]
         assert _re.search(r"@callback\s+def " + name + r"\b", src), f"{name} is not a @callback"
+
+
+def test_both_becomes_the_full_label(tmp_path):
+    (tmp_path / "s").mkdir()
+    cfg = store.StoreConfig(mount_path=str(tmp_path / "s"), folder="FW", child="Kid",
+                            require_mount=False, both_label="Mama & Dada")
+    ws = store.WordStore(cfg, today=lambda: TODAY)
+    w, _ = ws.create({"word": "sock", "heardBy": "both"}, "x")
+    assert w["heardBy"] == "Mama & Dada"
+    assert ws.update(w["id"], {"heardBy": "Both"})["heardBy"] == "Mama & Dada"
+    assert ws.update(w["id"], {"heardBy": "Grandma"})["heardBy"] == "Grandma"
+
+
+def test_normalize_existing_both_entries(tmp_path):
+    (tmp_path / "s").mkdir()
+    plain = store.WordStore(store.StoreConfig(mount_path=str(tmp_path / "s"), folder="FW", child="Kid",
+                                              require_mount=False), today=lambda: TODAY)
+    plain.create({"word": "sock", "heardBy": "Both"}, "x")
+    plain.create({"word": "dada", "heardBy": "Dada"}, "x")
+    fixer = store.WordStore(store.StoreConfig(mount_path=str(tmp_path / "s"), folder="FW", child="Kid",
+                                              require_mount=False, both_label="Mama & Dada"), today=lambda: TODAY)
+    assert fixer.normalize_heard_by() == 1
+    assert {w["word"]: w["heardBy"] for w in fixer.list_words()} == {"sock": "Mama & Dada", "dada": "Dada"}
+    assert fixer.normalize_heard_by() == 0  # idempotent
+
+
+def test_both_label_matches_panel_rule():
+    import importlib.util as iu
+    spec = iu.spec_from_file_location("fw_const", Path(__file__).parents[1] / "custom_components/first_words/const.py")
+    const = iu.module_from_spec(spec); spec.loader.exec_module(const)
+    assert const.both_label([{"label": "Mama"}, {"label": "Dada"}]) == "Mama & Dada"
+    assert const.both_label([{"label": "A"}, {"label": "B"}, {"label": "C"}]) == "A, B & C"
+    assert const.both_label([{"label": "A"}]) == ""

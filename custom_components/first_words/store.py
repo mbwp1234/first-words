@@ -123,6 +123,7 @@ class StoreConfig:
     child: str
     birthday: str = ""
     require_mount: bool = True
+    both_label: str = ""  # what "Both" means, e.g. "Mama & Dada"
 
 
 class WordStore:
@@ -221,9 +222,32 @@ class WordStore:
             "word": _txt(raw.get("word"), 60),
             "sounded": _txt(raw.get("sounded"), 60),
             "date": d,
-            "heardBy": _txt(raw.get("heardBy"), 40),
+            "heardBy": self._heard(raw.get("heardBy")),
             "notes": ("" if raw.get("notes") is None else str(raw.get("notes"))).strip()[:1000],
         }
+
+    def _heard(self, value: Any) -> str:
+        h = _txt(value, 40)
+        if self.config.both_label and h.lower() in ("both", "both of us", "both parents"):
+            return self.config.both_label
+        return h
+
+    def normalize_heard_by(self) -> int:
+        """Rewrite words saved as plain "Both" to the full label. Returns how many changed."""
+        if not self.config.both_label:
+            return 0
+        with self._lock:
+            self.check_ready()
+            data = self._read()
+            n = 0
+            for w in data["words"]:
+                fixed = self._heard(w.get("heardBy"))
+                if fixed != (w.get("heardBy") or ""):
+                    w["heardBy"] = fixed
+                    n += 1
+            if n:
+                self._write(data)
+            return n
 
     def _safe(self, rel: str) -> Path:
         """Resolve a stored relative path, refusing anything outside the root."""

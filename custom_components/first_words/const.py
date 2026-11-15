@@ -34,6 +34,14 @@ SERVICE_KEEPSAKE = "make_keepsake"
 SERVICE_IMPORT_JSON = "import_json"
 
 
+def both_label(people: list[dict[str, str]]) -> str:
+    """'Mama & Dada' (or 'A, B & C'); empty with fewer than two people. Same rule as the panel."""
+    labels = [p["label"] for p in people]
+    if len(labels) < 2:
+        return ""
+    return labels[0] + " & " + labels[1] if len(labels) == 2 else ", ".join(labels[:-1]) + " & " + labels[-1]
+
+
 def parse_people(text: str) -> list[dict[str, str]]:
     """'Alex: Mama' lines -> [{name, label}]. A bare name is its own label."""
     out: list[dict[str, str]] = []

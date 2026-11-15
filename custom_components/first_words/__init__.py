@@ -39,6 +39,7 @@ from .const import (
     SERVICE_IMPORT_JSON,
     SERVICE_KEEPSAKE,
     SIGNAL_CHANGED,
+    both_label,
     parse_people,
 )
 from .store import FirstWordsError, StoreConfig, WordStore
@@ -77,17 +78,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     s = _settings(entry)
     child = s.get(CONF_CHILD) or "Baby"
     birthday = s.get(CONF_BIRTHDAY) or ""
+    people = parse_people(s.get(CONF_PEOPLE, ""))
     store = WordStore(
         StoreConfig(
             mount_path=s.get(CONF_MOUNT) or DEFAULT_MOUNT,
             folder=s.get(CONF_FOLDER, DEFAULT_FOLDER),
             child=child,
             birthday=birthday,
+            both_label=both_label(people),
         ),
         today=lambda: dt_util.now().date(),
     )
     hass.data[DOMAIN] = FirstWordsRuntime(
-        store, child, birthday, parse_people(s.get(CONF_PEOPLE, "")),
+        store, child, birthday, people,
         storage_name=s.get(CONF_STORAGE_NAME) or DEFAULT_STORAGE_NAME,
         offsite=s.get(CONF_OFFSITE) or "",
     )
@@ -96,6 +99,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not status["mounted"]:
         # Not fatal: the panel still loads and explains, and every write refuses.
         _LOGGER.warning("First Words storage is not mounted at %s; saving is disabled until it is", status["path"])
+    else:
+        try:
+            fixed = await hass.async_add_executor_job(store.normalize_heard_by)
+            if fixed:
+                _LOGGER.info("First Words: rewrote %s 'Both' entries as %r", fixed, both_label(people))
+        except FirstWordsError as err:
+            _LOGGER.warning("First Words: couldn't normalise who-heard-it: %s", err)
 
     if not _ROUTES_REGISTERED:
         async_register_views(hass)
