@@ -359,3 +359,16 @@ def test_attach_audio_validates(ws):
     with pytest.raises(store.NotFound):
         ws.attach_audio("nope", b"x")
     assert ws.attach_audio(w["id"], b"x", "exe")["audioFile"].endswith(".wav")
+
+
+def test_dispatcher_handlers_are_callbacks():
+    """HA runs a non-@callback dispatcher target in the executor; the sensor's
+    refresh then fails off the event loop (seen live in v0.2.0)."""
+    import re as _re
+    src = (Path(__file__).parents[1] / "custom_components/first_words/sensor.py").read_text()
+    targets = _re.findall(r"async_dispatcher_connect\([^)]*?SIGNAL_CHANGED,\s*([^)\s]+)\)", src)
+    assert targets, "sensor no longer subscribes to SIGNAL_CHANGED?"
+    for t in targets:
+        assert not t.startswith("lambda"), t
+        name = t.split(".")[-1]
+        assert _re.search(r"@callback\s+def " + name + r"\b", src), f"{name} is not a @callback"

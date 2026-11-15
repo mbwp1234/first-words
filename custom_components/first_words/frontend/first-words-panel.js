@@ -13,7 +13,7 @@
 'use strict';
 if (customElements.get('first-words-panel')) return;
 
-var VERSION = '0.2.1';
+var VERSION = '0.2.2';
 
 var CSS = [
 ':host{',

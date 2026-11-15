@@ -6,7 +6,7 @@ from typing import Any
 
 from homeassistant.components.sensor import SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -34,8 +34,13 @@ class WordsSensor(SensorEntity):
         self._attrs: dict[str, Any] = {}
 
     async def async_added_to_hass(self) -> None:
-        self.async_on_remove(async_dispatcher_connect(
-            self.hass, SIGNAL_CHANGED, lambda: self.async_schedule_update_ha_state(True)))
+        self.async_on_remove(async_dispatcher_connect(self.hass, SIGNAL_CHANGED, self._on_changed))
+
+    @callback
+    def _on_changed(self) -> None:
+        # Must be a @callback: a plain function is run in the executor, and
+        # scheduling a state update from there is refused by HA.
+        self.async_schedule_update_ha_state(True)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
