@@ -11,6 +11,7 @@ import argparse
 import asyncio
 import importlib.util
 import json
+import os
 import sys
 import types
 from pathlib import Path
@@ -77,6 +78,13 @@ def build_app(data_dir: str, mounted: bool = True, user: str = "Alex") -> web.Ap
                                storage_name="Test NAS", offsite="copied offsite every night",
                                people=[{"name": "Alex", "label": "Mama"}, {"name": "Sam", "label": "Dada"}])
     pkg.get_runtime = lambda hass: rt
+    if not os.environ.get("FW_FFMPEG"):
+        try:
+            import imageio_ffmpeg
+            os.environ["FW_FFMPEG"] = imageio_ffmpeg.get_ffmpeg_exe()
+        except ImportError:
+            pass
+    _load("video")
     api = _load("api")
 
     hass = FakeHass()
@@ -92,7 +100,7 @@ def build_app(data_dir: str, mounted: bool = True, user: str = "Alex") -> web.Ap
 
     app = web.Application(middlewares=[auth], client_max_size=16 * 1024 * 1024)
     app["hass"] = hass
-    for view_cls in (api.WordsView, api.WordView, api.AudioView, api.VideoView, api.VideoStartView,
+    for view_cls in (api.WordsView, api.WordView, api.AudioView, api.VideoView, api.VideoTrimView, api.VideoStartView,
                      api.UploadView, api.UploadFinishView, api.ExportView, api.ExportFileView):
         view = view_cls()
         for method in ("get", "post", "patch", "put", "delete"):

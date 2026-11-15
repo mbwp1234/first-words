@@ -11,7 +11,7 @@
  */
 (function () {
 'use strict';
-var VERSION = '0.2.6';
+var VERSION = '0.3.0';
 /* The element is named per version: a browser can't redefine a custom element, so an
  * unversioned name kept the OLD code running in the HA app until a full reload. HA asks
  * for the name matching the installed manifest version (see __init__.py). */
@@ -168,6 +168,9 @@ var CSS = [
 '.dlg{padding:18px 18px 20px;display:flex;flex-direction:column;gap:12px}',
 '.dlg .head{display:flex;align-items:center;justify-content:space-between}',
 '.dlg h2{margin:0;font:800 20px var(--display)}',
+'.dlg .sect{font-size:13px;font-weight:600;color:var(--muted);margin-top:6px}',
+'.dlg .action{height:48px}',
+'.dlg .action.warn{color:var(--danger)}',
 '.danger{height:48px;border-radius:14px;border:1px solid #E5C4C0;background:#fff;color:var(--danger);font-weight:600}',
 '.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(110px + var(--safe-b));background:var(--ink);color:#fff;padding:12px 16px;border-radius:14px;font-size:14px;max-width:calc(100% - 32px);z-index:20;box-shadow:0 6px 24px rgba(0,0,0,.2);font-family:Inter,system-ui,sans-serif}',
 '.upbar{position:fixed;left:12px;right:12px;top:12px;z-index:15;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:12px 14px;box-shadow:0 6px 24px rgba(0,0,0,.12);display:flex;flex-direction:column;gap:8px;font-size:14px;max-width:496px;margin:0 auto;font-family:Inter,system-ui,sans-serif}',
@@ -334,6 +337,7 @@ var HTML = [
 '      <span class="ic" style="background:var(--gold-soft)"><svg viewBox="0 0 24 24" fill="none" stroke="#6B4200" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="m16 10 5-3v10l-5-3"/></svg></span>',
 '      <span class="tx"><b>Watch the video</b><small id="d-video-name">Plays here</small></span>',
 '    </button>',
+'    <p class="fine" id="d-video-full-wrap" hidden style="margin:8px 24px 0">The full video is kept too. <button class="linkbtn" type="button" id="d-video-full">Watch the full video</button></p>',
 '    <video class="dvideo" id="d-video" controls playsinline preload="metadata" hidden></video>',
 '  </section>',
 
@@ -377,6 +381,11 @@ var HTML = [
 '    <label class="field">Heard by<input id="e-heard" type="text" maxlength="40"></label>',
 '    <label class="field">Notes<textarea id="e-notes" rows="3" maxlength="1000"></textarea></label>',
 '    <button class="cta dark" type="button" id="e-save">Save changes</button>',
+'    <div class="sect" id="e-media-h">Recording &amp; video</div>',
+'    <button class="action" type="button" id="e-recut">Re-cut the clip<span id="e-recut-src"></span></button>',
+'    <button class="action" type="button" id="e-replace">Replace the recording or video</button>',
+'    <button class="action" type="button" id="e-vtrim">Trim the video</button>',
+'    <button class="action warn" type="button" id="e-vremove">Remove the video</button>',
 '    <button class="danger" type="button" id="e-delete">Delete this word</button>',
 '  </form>',
 '</dialog>',
@@ -1046,22 +1055,64 @@ function replaceWord(w) {
  * 'attach' (a clip for a word that was written down earlier). */
 function openAdd(kind, wordId) {
   resetClip();
-  var w = kind === 'attach' ? byId(wordId) : null;
-  if (kind === 'attach' && !w) kind = 'new';
+  var w = wordId ? byId(wordId) : null;
+  if ((kind === 'attach' || kind === 'recut' || kind === 'vtrim') && !w) kind = 'new';
   A.kind = kind; A.target = w ? w.id : null;
   $('f-word').value = ''; $('f-sounded').value = ''; $('f-notes').value = '';
   $('f-date').value = todayStr(); $('f-date').max = todayStr();
   var p = me();
   A.heard = p ? p.label : (C.people[0] ? C.people[0].label : '');
   $('f-heard-other').value = ''; renderHeard();
-  $('add-title').textContent = kind === 'quick' ? 'Add a word' : kind === 'attach' ? 'Capture “' + w.word + '”' : 'New word';
+  var fromSaved = kind === 'recut' || kind === 'vtrim';
+  $('add-title').textContent = kind === 'quick' ? 'Add a word'
+    : kind === 'attach' ? (hasAudio(w) ? 'Replace “' + w.word + '”' : 'Capture “' + w.word + '”')
+    : kind === 'recut' ? 'Re-cut “' + w.word + '”'
+    : kind === 'vtrim' ? 'Trim the video'
+    : 'New word';
   $('clip-card').hidden = kind === 'quick';
-  $('add-form').classList.toggle('attach', kind === 'attach');
-  $('save').textContent = kind === 'attach' ? 'Save recording' : 'Save word';
+  $('add-form').classList.toggle('attach', kind === 'attach' || fromSaved);
+  $('redo').hidden = fromSaved;
+  $('save').textContent = kind === 'attach' ? 'Save recording' : kind === 'recut' ? 'Save clip'
+    : kind === 'vtrim' ? 'Save trimmed video' : 'Save word';
   $('save-helper').textContent = kind === 'quick' ? 'Add the recording later from the word\'s page'
-    : kind === 'attach' ? 'Adds the clip to “' + w.word + '” from ' + fmtDate(w.date, { month: 'short', day: 'numeric' })
+    : kind === 'attach' ? (hasAudio(w) ? 'The old clip is kept in the share\'s .trash folder'
+      : 'Adds the clip to “' + w.word + '” from ' + fmtDate(w.date, { month: 'short', day: 'numeric' }))
+    : kind === 'recut' ? 'The old clip is kept in the share\'s .trash folder'
+    : kind === 'vtrim' ? 'Cuts a copy on ' + nas() + '. The full video is kept.'
     : saveHelper();
   show('add');
+  if (fromSaved) loadSaved_(w, kind);
+}
+/* Open the trimmer on a file already on the share: the video for a trim or (if there is one)
+ * a re-cut, otherwise the clip itself. */
+function loadSaved_(w, kind) {
+  var useVideo = kind === 'vtrim' || !!w.videoFile;
+  setMode('load');
+  $('load-msg').textContent = useVideo ? 'Getting the video from ' + nas() + '…' : 'Getting the clip from ' + nas() + '…';
+  var id = w.id;
+  Promise.resolve().then(function () {
+    return host.hass.fetchWithAuth('/api/first_words/' + (useVideo ? 'video/' : 'audio/') + encodeURIComponent(id));
+  }).then(function (r) {
+    if (!r.ok) return r.json().catch(function () { return {}; }).then(function (j) { throw new Error(j.error || "Couldn't load it from " + nas() + '.'); });
+    return r.blob();
+  }, function () { throw new Error("Can't reach Home Assistant."); }).then(function (blob) {
+    if (A.target !== id || (A.kind !== 'recut' && A.kind !== 'vtrim')) return;
+    var sel = null, a = parseFloat(w.clipStart), b = parseFloat(w.clipEnd);
+    if (kind === 'vtrim') {
+      var ts = parseFloat(w.videoTrimStart), te = parseFloat(w.videoTrimEnd);
+      if (isFinite(ts) && isFinite(te) && te > ts) sel = { start: ts, end: te };
+      else if (isFinite(a) && isFinite(b) && b > a) sel = { start: a - 2, end: b + 2, pad: true };
+    } else if (useVideo && isFinite(a) && isFinite(b) && b > a) {
+      sel = { start: a, end: b };
+    } else if (!useVideo) {
+      sel = { start: 0, end: 1e9 };
+    }
+    if (useVideo && !/^video\//.test(blob.type)) blob = new Blob([blob], { type: 'video/' + (/\.mov$/i.test(w.videoFile) ? 'quicktime' : 'mp4') });
+    loadClip(blob, useVideo ? 'file' : 'saved', sel);
+  }).catch(function (e) {
+    toast(e.message, 5000);
+    if (A.target === id) { leaveAdd(); openDetail(id); }
+  });
 }
 function saveHelper() { return 'Saves to ' + nas() + (C.offsite ? ' · ' + C.offsite : ''); }
 function leaveAdd() {
@@ -1070,7 +1121,7 @@ function leaveAdd() {
   if (S.view === 'add') resetClip();
 }
 $('add-close').addEventListener('click', function () {
-  if (A.kind === 'attach' && A.target && byId(A.target)) { var id = A.target; leaveAdd(); openDetail(id); return; }
+  if ((A.kind === 'attach' || A.kind === 'recut' || A.kind === 'vtrim') && A.target && byId(A.target)) { var id = A.target; leaveAdd(); openDetail(id); return; }
   go('list');
 });
 /* "Both" = every person heard it, stored readably as e.g. "Mama & Dada". */
@@ -1217,7 +1268,7 @@ function once(el, ev, ms) {
   });
 }
 
-function loadClip(blob, kind) {
+function loadClip(blob, kind, sel) {
   var isVideo = kind === 'file' && (/^video\//.test(blob.type) ||
     (!blob.type && /\.(mov|mp4|m4v|webm|3gp)$/i.test(blob.name || '')));
   setMode('load');
@@ -1248,10 +1299,20 @@ function loadClip(blob, kind) {
     var span = Math.min(clip.dur, WIN);
     clip.v0 = 0; clip.v1 = span;
     if (clip.dur <= WIN * 1.25) { clip.v1 = clip.dur; }
+    if (sel) {  // reopening a saved clip or video: start from what was chosen before
+      var s0 = clamp(sel.start, 0, clip.dur), e0 = clamp(sel.end, 0, clip.dur);
+      if (e0 - s0 < MIN_SEL) { s0 = 0; e0 = Math.min(clip.dur, 3); }
+      clip.start = s0; clip.end = e0;
+      if (clip.v1 < clip.dur) {
+        span = Math.min(clip.dur, Math.max(WIN, e0 - s0 + 1));
+        clip.v0 = clamp(s0 - (span - (e0 - s0)) / 2, 0, clip.dur - span);
+        clip.v1 = clip.v0 + span;
+      }
+    }
     A.clip = clip;
     $('vid').hidden = !isVideo;
     $('ov').hidden = clip.v1 >= clip.dur;
-    $('keep-wrap').hidden = !isVideo;
+    $('keep-wrap').hidden = !isVideo || A.kind === 'recut' || A.kind === 'vtrim';
     if (isVideo) {
       $('keep-label').textContent = 'Keep the full video too (' + mb(blob.size) + ')';
       $('f-keep').checked = blob.size < 300 * 1024 * 1024;
@@ -1562,7 +1623,7 @@ function saveAttach() {
   var btn = $('save');
   btn.disabled = true; btn.textContent = 'Saving…';
   var meta = { clipStart: Math.round(c.start * 100) / 100, clipEnd: Math.round(c.end * 100) / 100 };
-  var video = c.isVideo && $('f-keep').checked ? c.blob : null;
+  var video = A.kind === 'attach' && c.isVideo && $('f-keep').checked ? c.blob : null;
   var out = null;
   exportClip().then(function (audio) {
     out = audio;
@@ -1573,7 +1634,7 @@ function saveAttach() {
     replaceWord(w);
     resetClip();
     openDetail(w.id);
-    toast('Captured “' + w.word + '”');
+    toast(A.kind === 'recut' || w0.audioFile ? 'New clip saved. The old one is in .trash.' : 'Captured “' + w.word + '”', 3500);
     if (video) uploadVideo(video, w.id);
   }).catch(function (e) {
     if (!e.retryable || !out) { toast(e.message || 'Could not save. Try again.', 5000); return; }
@@ -1592,10 +1653,28 @@ function saveAttach() {
     }, function () {
       toast("Couldn't save, and this phone couldn't hold it either. Try again in a moment.", 6000);
     });
-  }).then(function () { btn.disabled = false; btn.textContent = 'Save recording'; });
+  }).then(function () { btn.disabled = false; btn.textContent = A.kind === 'recut' ? 'Save clip' : 'Save recording'; });
+}
+function saveTrim() {
+  var c = A.clip, id = A.target;
+  if (!c) { toast('Wait for the video to load.'); return; }
+  if (c.end - c.start < 0.5) { toast('Pick at least half a second.'); return; }
+  stopPreview();
+  var btn = $('save');
+  btn.disabled = true; btn.textContent = 'Trimming on ' + nas() + '…';
+  jsonReq('POST', '/video/' + encodeURIComponent(id) + '/trim',
+    { start: Math.round(c.start * 100) / 100, end: Math.round(c.end * 100) / 100 })
+    .then(function (w) {
+      replaceWord(w);
+      resetClip();
+      openDetail(w.id);
+      toast('Trimmed video saved. The full video is kept too.', 4000);
+    }).catch(function (e) { toast(e.message || "Couldn't trim the video.", 6000); })
+    .then(function () { btn.disabled = false; btn.textContent = 'Save trimmed video'; });
 }
 $('save').addEventListener('click', function () {
-  if (A.kind === 'attach') { saveAttach(); return; }
+  if (A.kind === 'vtrim') { saveTrim(); return; }
+  if (A.kind === 'attach' || A.kind === 'recut') { saveAttach(); return; }
   var word = $('f-word').value.trim();
   if (!word) { $('f-word').focus(); toast('Type the word ' + (C.child || 'they') + ' said.'); return; }
   if (recState) { toast('Stop the recording first.'); return; }
@@ -1858,7 +1937,12 @@ function renderDetail() {
     $('d-audio-name').textContent = w.audioFile ? folder + ' / ' + w.audioFile.replace('/', ' / ') : 'Details saved in the First Words log';
   }
   $('d-video-link').hidden = !w.videoFile;
-  if (w.videoFile) $('d-video-name').textContent = folder + ' / ' + w.videoFile.replace('/', ' / ');
+  var trimmed = !!(w.videoFile && w.videoTrimFile);
+  $('d-video-link').querySelector('b').textContent = trimmed ? 'Watch the moment' : 'Watch the video';
+  if (w.videoFile) $('d-video-name').textContent = trimmed
+    ? 'Trimmed copy · ' + clock(parseFloat(w.videoTrimEnd) - parseFloat(w.videoTrimStart))
+    : folder + ' / ' + w.videoFile.replace('/', ' / ');
+  $('d-video-full-wrap').hidden = !trimmed;
 }
 function drawDetailWave(frac) {
   lastFrac = frac || 0;
@@ -1905,17 +1989,20 @@ function stopDetailVideo() {
   var v = $('d-video');
   if (!v.hidden) { v.pause(); v.removeAttribute('src'); v.load(); v.hidden = true; }
 }
-$('d-video-link').addEventListener('click', function () {
+function playDetailVideo(full) {
   var w = byId(S.current);
   if (!w || !w.videoFile) return;
   stopPlay();
-  signedUrl('/api/first_words/video/' + encodeURIComponent(w.id)).then(function (url) {
+  var trim = !full && w.videoTrimFile;
+  signedUrl('/api/first_words/video/' + encodeURIComponent(w.id) + (trim ? '?v=trim' : '')).then(function (url) {
     var v = $('d-video');
     v.src = url; v.hidden = false;
     var p = v.play(); if (p && p.catch) p.catch(function () {});
     v.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }).catch(function () { toast("Couldn't open the video."); });
-});
+}
+$('d-video-link').addEventListener('click', function () { playDetailVideo(false); });
+$('d-video-full').addEventListener('click', function () { playDetailVideo(true); });
 
 /* ---- edit / delete */
 var delArmed = 0;
@@ -1926,7 +2013,36 @@ $('d-edit').addEventListener('click', function () {
   $('e-word').value = w.word; $('e-sounded').value = w.sounded || ''; $('e-date').value = w.date;
   $('e-heard').value = w.heardBy || ''; $('e-notes').value = w.notes || '';
   $('e-delete').textContent = 'Delete this word'; delArmed = 0;
+  $('e-recut').hidden = !w.audioFile && !w.videoFile;
+  $('e-recut-src').textContent = w.videoFile ? ' · from its video' : '';
+  $('e-replace').textContent = w.audioFile || w.videoFile ? 'Replace the recording or video' : 'Add a recording';
+  $('e-vtrim').hidden = !w.videoFile;
+  $('e-vtrim').textContent = w.videoTrimFile ? 'Trim the video again' : 'Trim the video';
+  $('e-vremove').hidden = !w.videoFile;
+  $('e-vremove').textContent = 'Remove the video'; vremArmed = 0;
   $('edit').showModal();
+});
+var vremArmed = 0;
+function fromDialog(kind) {
+  var id = S.current;
+  $('edit').close();
+  stopDetailVideo();
+  openAdd(kind, id);
+}
+$('e-recut').addEventListener('click', function () { fromDialog('recut'); });
+$('e-replace').addEventListener('click', function () { fromDialog('attach'); });
+$('e-vtrim').addEventListener('click', function () { fromDialog('vtrim'); });
+$('e-vremove').addEventListener('click', function () {
+  var btn = $('e-vremove');
+  if (Date.now() - vremArmed > 4000) { vremArmed = Date.now(); btn.textContent = 'Tap again to remove the video'; return; }
+  btn.disabled = true;
+  stopDetailVideo();
+  req('DELETE', '/video/' + encodeURIComponent(S.current)).then(function (w) {
+    replaceWord(w);
+    $('edit').close();
+    toast("Video removed. It's kept in the share's .trash folder.", 4500);
+  }).catch(function (e) { toast(e.message); })
+    .then(function () { btn.disabled = false; });
 });
 $('e-close').addEventListener('click', function () { $('edit').close(); });
 $('e-save').addEventListener('click', function () {

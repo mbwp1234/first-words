@@ -420,3 +420,89 @@ def test_panel_version_matches_manifest():
     assert "customElements.define(TAG," in js
     init = (root / "__init__.py").read_text()
     assert "_panel_file_info" in init and "var VERSION = '" in init, "HA must read the version from the panel file"
+
+
+# ---------------------------------------------------------------- editing a saved video
+
+def _with_video(ws, payload=b"VIDEO", name="a.mov"):
+    w, _ = ws.create({"word": "ball", "date": "2026-11-10"}, "x", b"clip")
+    tok = ws.video_start(w["id"], name, "video/quicktime", len(payload))
+    ws.video_chunk(tok, 0, payload)
+    return ws.video_finish(tok)
+
+
+def test_trim_job_and_finish(ws):
+    w = _with_video(ws)
+    src, tmp, s, e = ws.trim_job(w["id"], "1.234", 4)
+    assert src == (ws.root / "video/2026-11-10_ball.mov").resolve() and (s, e) == (1.23, 4.0)
+    assert tmp.parent == ws.root / "video/.partial" and tmp.name.startswith("trim-")
+    tmp.write_bytes(b"CUT1")
+    out = ws.finish_trim(w["id"], tmp, s, e)
+    assert out["videoTrimFile"] == "video/2026-11-10_ball_trim.mp4"
+    assert (ws.root / out["videoTrimFile"]).read_bytes() == b"CUT1"
+    assert out["videoFile"] == "video/2026-11-10_ball.mov" and (ws.root / out["videoFile"]).read_bytes() == b"VIDEO"
+    assert (out["videoTrimStart"], out["videoTrimEnd"]) == (1.23, 4.0)
+    assert ws.file_path(w["id"], "trim").read_bytes() == b"CUT1"
+    # re-trim: the earlier cut goes to .trash, the original stays
+    _, tmp2, s2, e2 = ws.trim_job(w["id"], 0, 2)
+    tmp2.write_bytes(b"CUT2")
+    out = ws.finish_trim(w["id"], tmp2, s2, e2)
+    assert (ws.root / out["videoTrimFile"]).read_bytes() == b"CUT2"
+    assert [p.read_bytes() for p in (ws.root / ".trash").rglob("*_trim.mp4")] == [b"CUT1"]
+
+
+def test_trim_job_validates(ws):
+    w, _ = ws.create({"word": "ball"}, "x")
+    with pytest.raises(store.NotFound):
+        ws.trim_job(w["id"], 0, 3)  # no video
+    w = _with_video(ws)
+    for s, e in [(None, 3), (2, 2.2), (-1, 3), ("x", 3)]:
+        with pytest.raises(store.BadRequest):
+            ws.trim_job(w["id"], s, e)
+
+
+def test_remove_video_moves_both_to_trash(ws):
+    w = _with_video(ws)
+    _, tmp, s, e = ws.trim_job(w["id"], 0, 2)
+    tmp.write_bytes(b"CUT")
+    ws.finish_trim(w["id"], tmp, s, e)
+    out = ws.remove_video(w["id"])
+    assert out["videoFile"] == "" and "videoTrimFile" not in out and out["audioFile"]
+    trashed = sorted(p.name for p in (ws.root / ".trash").rglob("*") if p.is_file())
+    assert trashed == ["2026-11-10_ball.mov", "2026-11-10_ball_trim.mp4"]
+    assert not any((ws.root / "video").glob("*.m*"))
+    with pytest.raises(store.NotFound):
+        ws.remove_video(w["id"])
+
+
+def test_rename_and_delete_carry_the_trim(ws):
+    w = _with_video(ws)
+    _, tmp, s, e = ws.trim_job(w["id"], 0, 2)
+    tmp.write_bytes(b"CUT")
+    ws.finish_trim(w["id"], tmp, s, e)
+    out = ws.update(w["id"], {"word": "big ball"})
+    assert out["videoTrimFile"] == "video/2026-11-10_big-ball_trim.mp4" and (ws.root / out["videoTrimFile"]).exists()
+    dest = ws.root / ws.delete(w["id"])
+    assert (dest / "2026-11-10_big-ball_trim.mp4").exists() and (dest / "2026-11-10_big-ball.mov").exists()
+
+
+def test_new_video_retires_the_old_trim(ws):
+    w = _with_video(ws, b"OLD")
+    _, tmp, s, e = ws.trim_job(w["id"], 0, 2)
+    tmp.write_bytes(b"CUT")
+    ws.finish_trim(w["id"], tmp, s, e)
+    tok = ws.video_start(w["id"], "b.mp4", "video/mp4", 3)
+    ws.video_chunk(tok, 0, b"NEW")
+    out = ws.video_finish(tok)
+    assert "videoTrimFile" not in out and (ws.root / out["videoFile"]).read_bytes() == b"NEW"
+    assert sorted(p.read_bytes() for p in (ws.root / ".trash").rglob("*") if p.is_file()) == [b"CUT", b"OLD"]
+
+
+def test_discard_partial_only_touches_trim_temps(ws, tmp_path):
+    ws.list_words()
+    t = ws.root / "video/.partial/trim-abc.mp4"; t.write_bytes(b"x")
+    ws.discard_partial(t)
+    assert not t.exists()
+    other = tmp_path / "trim-keep.mp4"; other.write_bytes(b"x")
+    ws.discard_partial(other)
+    assert other.exists()

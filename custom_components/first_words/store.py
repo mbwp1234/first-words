@@ -43,6 +43,7 @@ TRASH_DIR = ".trash"
 EXPORT_DIR = "exports"
 
 AUDIO_EXTS = {"wav", "m4a", "mp4", "webm", "ogg", "mp3", "aac"}
+TRIM_SUFFIX = "_trim"
 VIDEO_EXTS = {"mov", "mp4", "m4v", "webm", "3gp"}
 MAX_AUDIO_BYTES = 30 * 1024 * 1024
 MAX_CHUNK_BYTES = 8 * 1024 * 1024
@@ -276,13 +277,13 @@ class WordStore:
                 return w
         return None
 
-    def _rename(self, word: dict[str, Any], key: str, directory: str) -> None:
+    def _rename(self, word: dict[str, Any], key: str, directory: str, suffix: str = "") -> None:
         rel = word.get(key) or ""
         if not rel:
             return
         src = self.root / rel
         ext = rel.rsplit(".", 1)[-1] if "." in rel else ""
-        target = self._unique(directory, file_stem(word), ext, own=rel)
+        target = self._unique(directory, file_stem(word) + suffix, ext, own=rel)
         if target != rel and src.exists():
             os.replace(src, self.root / target)
             word[key] = target
@@ -363,6 +364,7 @@ class WordStore:
             w["editedAt"] = _now_iso()
             self._rename(w, "audioFile", AUDIO_DIR)
             self._rename(w, "videoFile", VIDEO_DIR)
+            self._rename(w, "videoTrimFile", VIDEO_DIR, TRIM_SUFFIX)
             self._write(data)
             return w
 
@@ -406,7 +408,7 @@ class WordStore:
             if not w:
                 raise NotFound("That word was not found. Pull down to refresh.")
             dest = self._trash(w, "deleted")
-            for key in ("audioFile", "videoFile"):
+            for key in ("audioFile", "videoFile", "videoTrimFile"):
                 rel = w.get(key)
                 if rel and (self.root / rel).exists():
                     shutil.move(str(self.root / rel), str(dest / Path(rel).name))
@@ -416,7 +418,8 @@ class WordStore:
             return str(dest.relative_to(self.root))
 
     def file_path(self, word_id: str, kind: str) -> Path:
-        key = "audioFile" if kind == "audio" else "videoFile"
+        """kind: 'audio', 'video' (the full original) or 'trim' (the trimmed copy)."""
+        key = {"audio": "audioFile", "video": "videoFile", "trim": "videoTrimFile"}.get(kind, "videoFile")
         w = self.get_word(word_id)
         rel = w.get(key) or ""
         if not rel:
@@ -453,6 +456,12 @@ class WordStore:
             meta.write_text(json.dumps({"wordId": word_id, "size": size, "ext": ext,
                                         "startedAt": _now_iso()}), encoding="utf-8")
         return token
+
+    def discard_partial(self, path: Path) -> None:
+        """Remove our own temp file (an unfinished trim). Only inside video/.partial."""
+        p = Path(path)
+        if p.parent.resolve() == (self.root / PARTIAL_DIR).resolve() and p.name.startswith("trim-") and p.exists():
+            p.unlink()
 
     def video_received(self, token: str) -> int:
         part, meta = self._partial(token)
@@ -495,13 +504,69 @@ class WordStore:
             w = self._find(data["words"], info["wordId"])
             if not w:
                 raise NotFound("The word was deleted before its video finished.")
-            if w.get("videoFile") and (self.root / w["videoFile"]).exists():
+            if (w.get("videoFile") and (self.root / w["videoFile"]).exists()) or w.get("videoTrimFile"):
                 dest = self._trash(w, "replaced-video")
-                shutil.move(str(self.root / w["videoFile"]), str(dest / Path(w["videoFile"]).name))
+                for key in ("videoFile", "videoTrimFile"):  # a trim belongs to the video it was cut from
+                    if w.get(key) and (self.root / w[key]).exists():
+                        shutil.move(str(self.root / w[key]), str(dest / Path(w[key]).name))
+                for key in ("videoTrimFile", "videoTrimStart", "videoTrimEnd"):
+                    w.pop(key, None)
             rel = self._unique(VIDEO_DIR, file_stem(w), info["ext"])
             os.replace(part, self.root / rel)
             meta.unlink()
             w["videoFile"] = rel
+            self._write(data)
+            return w
+
+    # ------------------------------------------------------------ editing a saved video
+
+    def remove_video(self, word_id: str) -> dict[str, Any]:
+        """Detach the video (and any trimmed copy) from a word: both go to .trash."""
+        with self._lock:
+            self.check_ready()
+            data = self._read()
+            w = self._find(data["words"], word_id)
+            if not w:
+                raise NotFound("That word was not found. Pull down to refresh.")
+            if not w.get("videoFile") and not w.get("videoTrimFile"):
+                raise NotFound("This word has no video.")
+            dest = self._trash(w, "removed-video")
+            for key in ("videoFile", "videoTrimFile"):
+                if w.get(key) and (self.root / w[key]).exists():
+                    shutil.move(str(self.root / w[key]), str(dest / Path(w[key]).name))
+            w["videoFile"] = ""
+            for key in ("videoTrimFile", "videoTrimStart", "videoTrimEnd"):
+                w.pop(key, None)
+            self._write(data)
+            return w
+
+    def trim_job(self, word_id: str, start: Any, end: Any) -> tuple[Path, Path, float, float]:
+        """Validate a trim and return (source, temp output, start, end). The cut itself
+        (ffmpeg) runs outside the lock; finish_trim() then puts the result in place."""
+        s, e = _num(start), _num(end)
+        if s is None or e is None or s < 0 or e - s < 0.5:
+            raise BadRequest("Pick at least half a second of video.")
+        src = self.file_path(word_id, "video")
+        tmp = self.root / PARTIAL_DIR / f"trim-{uuid.uuid4().hex}.mp4"
+        return src, tmp, s, e
+
+    def finish_trim(self, word_id: str, tmp: Path, start: float, end: float, ext: str = "mp4") -> dict[str, Any]:
+        """Move a finished cut into video/<stem>_trim.<ext>; an older trim goes to .trash."""
+        with self._lock:
+            self.check_ready()
+            data = self._read()
+            w = self._find(data["words"], word_id)
+            if not w:
+                raise NotFound("The word was deleted while its video was being trimmed.")
+            old = w.get("videoTrimFile")
+            if old and (self.root / old).exists():
+                dest = self._trash(w, "replaced-trim")
+                shutil.move(str(self.root / old), str(dest / Path(old).name))
+            rel = self._unique(VIDEO_DIR, file_stem(w) + TRIM_SUFFIX, ext)
+            os.replace(tmp, self.root / rel)
+            w["videoTrimFile"] = rel
+            w["videoTrimStart"] = round(start, 2)
+            w["videoTrimEnd"] = round(end, 2)
             self._write(data)
             return w
 

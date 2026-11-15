@@ -199,6 +199,87 @@ def main() -> int:
         check("clip renamed on disk", (root / f"audio/{today}_big-ball.wav").exists()
               and not (root / f"audio/{today}_ball.wav").exists())
         check("video renamed on disk", (root / f"video/{today}_big-ball.mp4").exists())
+
+        print("re-cut, trim, replace, remove (a saved word's recording and video)")
+        import re as _re
+        import imageio_ffmpeg
+        def word_named(name):
+            return next(w for w in json.loads((root / "first-words.json").read_text())["words"] if w["word"] == name)
+        def dur_of(path):
+            import imageio_ffmpeg
+            out = subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-hide_banner", "-i", str(path)], capture_output=True, text=True).stderr
+            h, m, sec = _re.search(r"Duration: (\d+):(\d+):([\d.]+)", out).groups()
+            return int(h) * 3600 + int(m) * 60 + float(sec)
+        before = word_named("big ball")
+        pg.click("#d-edit"); pg.wait_for_timeout(150)
+        check("edit dialog offers re-cut from its video", pg.is_visible("#e-recut") and "from its video" in pg.inner_text("#e-recut"))
+        check("edit dialog offers trim and remove for a word with video", pg.is_visible("#e-vtrim") and pg.is_visible("#e-vremove"))
+        pg.click("#e-recut")
+        try:
+            pg.wait_for_selector("#c-trim:not([hidden])", timeout=20000)
+        except Exception:
+            print("    DEBUG view:", pg.evaluate("() => document.querySelector('first-words-panel')._app._debug.S.view"),
+                  "mode:", pg.evaluate("() => document.querySelector('first-words-panel')._app._debug.A.mode"),
+                  "kind:", pg.evaluate("() => document.querySelector('first-words-panel')._app._debug.A.kind"),
+                  "toast:", pg.inner_text("#toast"), "errs:", errs[-3:])
+            raise
+        pg.wait_for_timeout(400)
+        st = pg.evaluate("() => { const c = document.querySelector('first-words-panel')._app._debug.A.clip; return [c.start, c.end, c.isVideo]; }")
+        check(f"re-cut opens the saved video at the saved selection ({st} vs {before['clipStart']}-{before['clipEnd']})",
+              st[2] and abs(st[0] - before["clipStart"]) < 0.05 and abs(st[1] - before["clipEnd"]) < 0.05)
+        check("re-cut hides the word form and the keep-video toggle",
+              pg.eval_on_selector("#f-word", "e=>e.offsetParent===null") and pg.eval_on_selector("#keep-wrap", "e=>e.hidden"))
+        he = pg.locator("#h-end").bounding_box()
+        pg.mouse.move(he["x"] + 22, he["y"] + 40); pg.mouse.down(); pg.mouse.move(he["x"] - 40, he["y"] + 40, steps=6); pg.mouse.up()
+        pg.wait_for_timeout(200)
+        pg.click("#save"); pg.wait_for_selector("#v-detail:not([hidden])", timeout=15000); pg.wait_for_timeout(300)
+        after = word_named("big ball")
+        check(f"re-cut saved a shorter clip ({before['clipEnd']} -> {after['clipEnd']})", after["clipEnd"] < before["clipEnd"] - 0.2)
+        check("old clip moved to .trash", any(p.name.endswith("_big-ball.wav") for p in (root / ".trash").rglob("*.wav")))
+        check("the video is untouched by a re-cut", after["videoFile"] == before["videoFile"] and (root / after["videoFile"]).read_bytes() == video.read_bytes())
+
+        pg.click("#d-edit"); pg.click("#e-vtrim")
+        pg.wait_for_selector("#c-trim:not([hidden])", timeout=20000); pg.wait_for_timeout(400)
+        sel = pg.evaluate("() => { const c = document.querySelector('first-words-panel')._app._debug.A.clip; return [c.start, c.end]; }")
+        check(f"trim starts from the clip padded by 2 s ({sel})", abs(sel[0] - max(0, after["clipStart"] - 2)) < 0.05)
+        pg.click("#save")
+        pg.wait_for_selector("#v-detail:not([hidden])", timeout=120000); pg.wait_for_timeout(300)
+        tw = word_named("big ball")
+        tf = root / tw.get("videoTrimFile", "missing")
+        check("trimmed copy saved as .mp4 next to the original", tw.get("videoTrimFile", "").endswith("_big-ball_trim.mp4") and tf.exists())
+        check("original kept, byte-identical", (root / tw["videoFile"]).read_bytes() == video.read_bytes())
+        if tf.exists():
+            d = dur_of(tf)
+            check(f"trimmed copy is the chosen length ({d:.2f}s vs {sel[1] - sel[0]:.2f}s)", abs(d - (sel[1] - sel[0])) < 0.3)
+            ff_out = subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-hide_banner", "-i", str(tf)], capture_output=True, text=True).stderr
+            check("trimmed copy is H.264 + AAC (plays in every browser)", "h264" in ff_out and "aac" in ff_out)
+        check("detail now says Watch the moment", pg.inner_text("#d-video-link b") == "Watch the moment")
+        check("and offers the full video", pg.is_visible("#d-video-full"))
+        pg.click("#d-video-link"); pg.wait_for_timeout(800)
+        check("Watch the moment plays the trimmed copy", pg.eval_on_selector("#d-video", "v=>/v=trim/.test(v.src) && v.readyState>=1"))
+        pg.click("#d-video-full"); pg.wait_for_timeout(800)
+        check("Watch the full video plays the original", pg.eval_on_selector("#d-video", "v=>!/v=trim/.test(v.src) && v.readyState>=1"))
+        pg.screenshot(path=str(OUT / "s15_trimmed_detail.png"), full_page=True)
+
+        pg.click("#d-edit"); pg.click("#e-replace"); pg.wait_for_timeout(200)
+        check("replace screen is titled for the word", pg.inner_text("#add-title") == "Replace “big ball”")
+        pg.set_input_files("#file-in", str(memo))
+        pg.wait_for_selector("#c-trim:not([hidden])", timeout=10000)
+        pg.click("#save"); pg.wait_for_selector("#v-detail:not([hidden])", timeout=15000); pg.wait_for_timeout(300)
+        rw = word_named("big ball")
+        check(f"replace swapped the clip for the 4 s memo (clip {rw['clipStart']}-{rw['clipEnd']})",
+              rw["clipStart"] == 0 and rw["clipEnd"] > 3.5 and rw.get("capturedAt") != tw.get("capturedAt"))
+        check("replace kept the video and its trim", rw["videoFile"] == tw["videoFile"] and rw.get("videoTrimFile") == tw["videoTrimFile"])
+
+        pg.click("#d-edit"); pg.click("#e-vremove")
+        check("remove asks for a second tap", "Tap again" in pg.inner_text("#e-vremove"))
+        pg.click("#e-vremove"); pg.wait_for_timeout(500)
+        gw = word_named("big ball")
+        check("video removed from the word", gw["videoFile"] == "" and "videoTrimFile" not in gw)
+        check("both video files are in .trash", any(p.name.endswith("_big-ball.mp4") for p in (root / ".trash").rglob("*.mp4"))
+              and any(p.name.endswith("_big-ball_trim.mp4") for p in (root / ".trash").rglob("*.mp4")))
+        check("the clip survives removing the video", (root / gw["audioFile"]).exists())
+        check("detail no longer offers the video", pg.eval_on_selector("#d-video-link", "e=>e.hidden"))
         pg.click("#v-detail [data-go='list']"); pg.wait_for_timeout(200)
         pg.screenshot(path=str(OUT / "s4_list.png"), full_page=True)
         pg.click("[data-open='a2']"); pg.wait_for_timeout(200)

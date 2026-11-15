@@ -14,6 +14,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .const import API_BASE, EVENT_ADDED, EVENT_DELETED, EVENT_UPDATED, SIGNAL_CHANGED
+from .video import TrimFailed, cut
 from .store import MAX_AUDIO_BYTES, MAX_CHUNK_BYTES, Conflict, FirstWordsError, StorageUnavailable
 
 if TYPE_CHECKING:
@@ -163,8 +164,11 @@ class _FileView(_View):
 
     async def get(self, request: web.Request, word_id: str) -> web.StreamResponse:
         hass = request.app["hass"]
+        kind = self.kind
+        if kind == "video" and request.query.get("v") == "trim":
+            kind = "trim"
         try:
-            path = await hass.async_add_executor_job(_rt(request).store.file_path, word_id, self.kind)
+            path = await hass.async_add_executor_job(_rt(request).store.file_path, word_id, kind)
         except Exception as err:  # noqa: BLE001
             return _err(err)
         ctype = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
@@ -198,9 +202,55 @@ class AudioView(_FileView):
 
 
 class VideoView(_FileView):
+    """GET the full video (?v=trim for the trimmed copy); DELETE detaches both to .trash."""
+
     url = API_BASE + "/video/{word_id}"
     name = "api:first_words:video"
     kind = "video"
+
+    async def delete(self, request: web.Request, word_id: str) -> web.Response:
+        hass = request.app["hass"]
+        try:
+            word = await hass.async_add_executor_job(_rt(request).store.remove_video, word_id)
+        except Exception as err:  # noqa: BLE001
+            return _err(err)
+        _changed(hass, EVENT_UPDATED, word, request)
+        return self.json(word)
+
+
+class VideoTrimView(_View):
+    """POST {start, end}: cut that part of the saved video into a playable copy.
+    The original stays as it is."""
+
+    url = API_BASE + "/video/{word_id}/trim"
+    name = "api:first_words:video_trim"
+
+    async def post(self, request: web.Request, word_id: str) -> web.Response:
+        hass = request.app["hass"]
+        tmp = None
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                raise ValueError
+            store = _rt(request).store
+            src, tmp, start, end = await hass.async_add_executor_job(
+                store.trim_job, word_id, body.get("start"), body.get("end"))
+            ext = await cut(src, tmp, start, end)
+            tmp = tmp.with_suffix("." + ext)
+            word = await hass.async_add_executor_job(store.finish_trim, word_id, tmp, start, end, ext)
+            tmp = None
+        except ValueError:
+            return web.json_response({"error": "Bad request."}, status=400)
+        except TrimFailed as err:
+            return web.json_response({"error": str(err)}, status=500)
+        except Exception as err:  # noqa: BLE001
+            return _err(err)
+        finally:
+            if tmp is not None:
+                for t in {tmp, tmp.with_suffix(".mp4"), tmp.with_suffix(".mov")}:
+                    await hass.async_add_executor_job(_rt(request).store.discard_partial, t)
+        _changed(hass, EVENT_UPDATED, word, request)
+        return self.json(word)
 
 
 class VideoStartView(_View):
@@ -304,6 +354,6 @@ class ExportFileView(_View):
 
 
 def async_register_views(hass: HomeAssistant) -> None:
-    for view in (WordsView, WordView, AudioView, VideoView, VideoStartView, UploadView,
+    for view in (WordsView, WordView, AudioView, VideoView, VideoTrimView, VideoStartView, UploadView,
                  UploadFinishView, ExportView, ExportFileView):
         hass.http.register_view(view())
