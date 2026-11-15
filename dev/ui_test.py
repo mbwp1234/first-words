@@ -477,12 +477,15 @@ def main() -> int:
         pg.wait_for_selector("#c-trim:not([hidden])", timeout=20000); pg.wait_for_timeout(300)
         check("camera clip reaches the trim view", "No waveform" not in pg.inner_text("#trim-hint"))
         pg.click("#sel-play"); pg.wait_for_timeout(400)
-        st = pg.evaluate("""() => { const a = document.querySelector('first-words-panel')._app._debug, h = a.hush();
-          return { audio: a.P.id, hush: !!h && !h.paused }; }""")
-        check(f"no audioSession: a silent media element plays alongside the Web Audio ({st})",
-              st["audio"] == "preview" and st["hush"])
+        st = pg.evaluate("""() => { const a = document.querySelector('first-words-panel')._app._debug, el = a.el;
+          return { audio: a.P.id, el: !el.paused, wav: (el.src || '').startsWith('blob:'), web: !!a.P.src }; }""")
+        check(f"no audioSession: the sound plays through a media element, not Web Audio ({st})",
+              st["audio"] == "preview" and st["el"] and st["wav"] and not st["web"])
+        pg.wait_for_timeout(600)
+        t = pg.evaluate("() => document.querySelector('first-words-panel')._app._debug.el.currentTime")
+        check(f"and it is actually advancing ({t:.2f}s)", t > 0.2)
         pg.click("#sel-play"); pg.wait_for_timeout(200)
-        check("and stops with it", pg.evaluate("() => { const h = document.querySelector('first-words-panel')._app._debug.hush(); return h.paused; }"))
+        check("and stops with it", pg.evaluate("() => document.querySelector('first-words-panel')._app._debug.el.paused"))
         pg.fill("#f-word", "camera-word"); pg.click("#save")
         pg.wait_for_selector("#v-detail:not([hidden])", timeout=20000)
         t0 = time.time()

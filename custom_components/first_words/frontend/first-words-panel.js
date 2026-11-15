@@ -11,7 +11,7 @@
  */
 (function () {
 'use strict';
-var VERSION = '0.3.3';
+var VERSION = '0.3.4';
 /* The element is named per version: a browser can't redefine a custom element, so an
  * unversioned name kept the OLD code running in the HA app until a full reload. HA asks
  * for the name matching the installed manifest version (see __init__.py). */
@@ -805,44 +805,50 @@ var P = { src: null, id: null, raf: 0, onEnd: null };
 var fallbackEl = new Audio();
 var clipCache = new Map();
 
-/* Without navigator.audioSession (an http:// page, e.g. the HA app on its internal URL,
- * or an older iOS) the ring switch mutes Web Audio. A media element is NOT muted, and
- * while one is playing WebKit moves the whole page into the playback category — so a
- * looping clip of silence runs alongside every Web Audio playback. */
-var hushEl = null;
-function silentWav() {
-  var n = 4410, b = new ArrayBuffer(44 + n * 2), v = new DataView(b);
-  var w = function (o, t) { for (var i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
-  w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
-  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
-  v.setUint32(24, 44100, true); v.setUint32(28, 88200, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
-  w(36, 'data'); v.setUint32(40, n * 2, true);
-  return URL.createObjectURL(new Blob([b], { type: 'audio/wav' }));
+/* Without navigator.audioSession (an http:// page, e.g. the HA app on its internal URL —
+ * confirmed from the app's own log, secure=false) the ring switch mutes Web Audio, and a
+ * looping silent <audio> alongside did NOT lift it inside the app (v0.3.1). A media element
+ * playing the sound itself is never muted, so there the selection is rendered to a WAV and
+ * played through one. Web Audio stays the path wherever audioSession exists. */
+var elWav = { buf: null, from: -1, to: -1, url: '' };
+function viaElement() { return !navigator.audioSession; }
+function wavUrl(buf, from, to) {
+  if (elWav.buf !== buf || elWav.from !== from || elWav.to !== to) {
+    if (elWav.url) URL.revokeObjectURL(elWav.url);
+    elWav = { buf: buf, from: from, to: to, url: URL.createObjectURL(encodeWav(monoSlice(buf, from, to), buf.sampleRate)) };
+  }
+  return elWav.url;
 }
-function hushOn() {
-  if (navigator.audioSession) return;
-  try {
-    if (!hushEl) { hushEl = new Audio(); hushEl.loop = true; hushEl.setAttribute('playsinline', ''); hushEl.src = silentWav(); }
-    var p = hushEl.play(); if (p && p.catch) p.catch(function () {});
-  } catch (e) {}
-}
-function hushOff() { try { if (hushEl) hushEl.pause(); } catch (e) {} }
 
 function stopPlay() {
   if (P.src) { try { P.src.onended = null; P.src.stop(); } catch (e) {} P.src = null; }
   try { fallbackEl.pause(); } catch (e) {}
-  hushOff();
+  fallbackEl.onended = null;
   cancelAnimationFrame(P.raf);
   var cb = P.onEnd; P.id = null; P.onEnd = null;
   if (cb) cb();
 }
 function playBuffer(buf, from, to, id, onTick, onEnd) {
   stopPlay();
-  hushOn();
+  var dur = Math.max(0.01, to - from);
+  if (viaElement()) {
+    P.id = id; P.onEnd = onEnd;
+    fallbackEl.setAttribute('playsinline', '');
+    fallbackEl.src = wavUrl(buf, from, to);
+    fallbackEl.onended = function () { if (P.id === id) stopPlay(); };
+    var pr = fallbackEl.play();
+    if (pr && pr.catch) pr.catch(function (e) { diag('play via element refused: ' + (e && e.name)); if (P.id === id) stopPlay(); });
+    (function tick() {
+      if (P.id !== id) return;
+      if (onTick) onTick(from + Math.min(fallbackEl.currentTime || 0, dur));
+      P.raf = requestAnimationFrame(tick);
+    })();
+    return;
+  }
   var c = getCtx(), s = c.createBufferSource();
   s.buffer = buf; s.connect(c.destination);
   P.src = s; P.id = id; P.onEnd = onEnd;
-  var t0 = c.currentTime, dur = Math.max(0.01, to - from);
+  var t0 = c.currentTime;
   s.onended = function () { if (P.src === s) { P.src = null; stopPlay(); } };
   s.start(0, from, dur);
   (function tick() {
@@ -2227,7 +2233,7 @@ return {
     document.removeEventListener('visibilitychange', onVisible);
     clearInterval(flushTimer);
   },
-  _debug: { S: S, A: A, P: P, Q: Q, flush: flushQueue, hush: function () { return hushEl; } }
+  _debug: { S: S, A: A, P: P, Q: Q, flush: flushQueue, el: fallbackEl }
 };
 }
 
