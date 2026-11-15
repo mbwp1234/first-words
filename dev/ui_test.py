@@ -324,6 +324,46 @@ def main() -> int:
         pg.screenshot(path=str(OUT / "s10_desktop_detail.png"))
         b.close()
 
+    print("iPhone .mov in WebKit (the engine behind iPhone Safari and the HA app)")
+    import imageio_ffmpeg
+    ff = imageio_ffmpeg.get_ffmpeg_exe()
+    variants = {
+        "mono-44k-moov-end": ["-ac", "1", "-ar", "44100"],
+        "stereo-48k-faststart": ["-ac", "2", "-ar", "48000", "-movflags", "+faststart"],
+        "mono-44k-20s": ["-ac", "1", "-ar", "44100"],
+    }
+    with sync_playwright() as p:
+        b = p.webkit.launch()
+        for name, extra in variants.items():
+            secs = 20 if "20s" in name else 3
+            mov = tmp / f"IMG_{name}.MOV"
+            # 1 s of silence, then a tone: the waveform and the clip must both show sound
+            subprocess.run([ff, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=30",
+                            "-f", "lavfi", "-i", f"anullsrc=r=44100:cl=mono:d=1[s];sine=frequency=330:duration={secs}[t];[s][t]concat=n=2:v=0:a=1",
+                            "-t", str(secs), "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", *extra,
+                            "-f", "mov", str(mov)], check=True)
+            pg = b.new_page(viewport={"width": 390, "height": 844})
+            pg.goto(base + "/"); pg.wait_for_timeout(800)
+            pg.click('#v-list [data-go="add"]'); pg.wait_for_timeout(200)
+            pg.set_input_files("#file-in", files=[{"name": mov.name, "mimeType": "video/quicktime", "buffer": mov.read_bytes()}])
+            pg.wait_for_selector("#c-trim:not([hidden])", timeout=20000); pg.wait_for_timeout(300)
+            check(f"{name}: waveform drawn (sound read from the .mov)", "No waveform" not in pg.inner_text("#trim-hint"))
+            pg.fill("#f-word", "w-" + name); pg.click("#save")
+            pg.wait_for_selector("#v-detail:not([hidden])", timeout=20000)
+            pg.wait_for_function("() => document.querySelector('first-words-panel').shadowRoot.getElementById('upbar').hidden", timeout=30000)
+            w = next(x for x in json.loads((root / "first-words.json").read_text())["words"] if x["word"] == "w-" + name)
+            check(f"{name}: clip saved as .wav", w["audioFile"].endswith(".wav"))
+            with wave.open(str(root / w["audioFile"])) as wf:
+                frames = wf.readframes(wf.getnframes()); sr = wf.getframerate(); nfr = wf.getnframes()
+            samples = struct.unpack("<%dh" % (len(frames) // 2), frames)
+            sec1 = samples[sr: 2 * sr] if len(samples) >= 2 * sr else samples[sr:]
+            quiet = samples[: int(sr * 0.8)]
+            rms = lambda xs: math.sqrt(sum(x * x for x in xs) / max(1, len(xs)))
+            check(f"{name}: clip has the tone after 1 s (rms {rms(sec1):.0f}) and silence before (rms {rms(quiet):.0f})",
+                  rms(sec1) > 1000 and rms(quiet) < 200)
+            pg.close()
+        b.close()
+
     print("not mounted")
     tmp2 = Path(tempfile.mkdtemp(prefix="fw-ui2-"))
     start_server(str(tmp2), port + 1, mounted=False)

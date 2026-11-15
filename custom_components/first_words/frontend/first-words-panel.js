@@ -13,7 +13,7 @@
 'use strict';
 if (customElements.get('first-words-panel')) return;
 
-var VERSION = '0.2.3';
+var VERSION = '0.2.4';
 
 var CSS = [
 ':host{',
@@ -529,6 +529,9 @@ function mb(bytes) { var m = bytes / 1048576; return m < 10 ? m.toFixed(1) + ' M
 /* ---- audio context (resumed inside taps so iPhones allow sound) */
 var actx = null;
 function getCtx() {
+  // iOS mutes Web Audio while the ring switch is on silent unless the page asks to be
+  // treated as media playback (Safari 17+). Without this, clips play silently.
+  try { if (navigator.audioSession && navigator.audioSession.type !== 'playback') navigator.audioSession.type = 'playback'; } catch (e) {}
   if (!actx) {
     var AC = window.AudioContext || window.webkitAudioContext;
     actx = new AC();
@@ -540,6 +543,108 @@ function decode(ab) {
   return new Promise(function (resolve, reject) {
     var p = getCtx().decodeAudioData(ab, resolve, reject);
     if (p && p.then) p.then(resolve, reject);
+  });
+}
+/* ---- pull the AAC track out of an MP4 / QuickTime (.mov) file as ADTS.
+ * WebKit (iPhone Safari, the HA app) refuses decodeAudioData on a .mov even though
+ * the sound inside is plain AAC, which it decodes happily once it is unwrapped.
+ * Returns an ArrayBuffer of ADTS frames, or null if there's no AAC track to pull. */
+function mp4AudioToAdts(ab) {
+  try {
+    var dv = new DataView(ab), u8 = new Uint8Array(ab);
+    var fourcc = function (o) { return String.fromCharCode(u8[o], u8[o + 1], u8[o + 2], u8[o + 3]); };
+    var boxes = function (start, end) {
+      var out = [], o = start;
+      while (o + 8 <= end) {
+        var size = dv.getUint32(o), type = fourcc(o + 4), hdr = 8;
+        if (size === 1) { size = dv.getUint32(o + 8) * 4294967296 + dv.getUint32(o + 12); hdr = 16; }
+        else if (size === 0) size = end - o;
+        if (size < hdr || o + size > end) break;
+        out.push({ type: type, start: o, body: o + hdr, end: o + size });
+        o += size;
+      }
+      return out;
+    };
+    var child = function (box, type) {
+      var b = boxes(box.body, box.end);
+      for (var i = 0; i < b.length; i++) if (b[i].type === type) return b[i];
+      return null;
+    };
+    var path = function (box, types) {
+      for (var i = 0; box && i < types.length; i++) box = child(box, types[i]);
+      return box;
+    };
+    var moov = boxes(0, ab.byteLength).filter(function (b) { return b.type === 'moov'; })[0];
+    if (!moov) return null;
+    var traks = boxes(moov.body, moov.end).filter(function (b) { return b.type === 'trak'; });
+    for (var t = 0; t < traks.length; t++) {
+      var hdlr = path(traks[t], ['mdia', 'hdlr']);
+      if (!hdlr || fourcc(hdlr.body + 8) !== 'soun') continue;
+      var stbl = path(traks[t], ['mdia', 'minf', 'stbl']);
+      var stsd = stbl && child(stbl, 'stsd');
+      if (!stsd || fourcc(stsd.body + 12) !== 'mp4a') continue;
+      // The esds sits directly in the mp4a entry (MP4) or inside its 'wave' atom (QuickTime): find it by scanning.
+      var entryEnd = stsd.body + 8 + dv.getUint32(stsd.body + 8), esds = -1;
+      for (var k = stsd.body + 16; k + 4 <= entryEnd; k++) if (fourcc(k) === 'esds') { esds = k + 8; break; }
+      if (esds < 0) continue;
+      // ES descriptor -> DecoderConfig -> DecoderSpecificInfo (AudioSpecificConfig)
+      var q = esds, asc = -1;
+      var desc = function () { var tag = u8[q++], len = 0, c; do { c = u8[q++]; len = (len << 7) | (c & 0x7f); } while (c & 0x80); return { tag: tag, len: len }; };
+      var d = desc(); if (d.tag !== 3) continue;
+      var fl = u8[q + 2]; q += 3;
+      if (fl & 0x80) q += 2; if (fl & 0x40) q += 1 + u8[q]; if (fl & 0x20) q += 2;
+      d = desc(); if (d.tag !== 4) continue;
+      q += 13;
+      d = desc(); if (d.tag !== 5) continue;
+      asc = q;
+      var aot = u8[asc] >> 3, sfi = ((u8[asc] & 7) << 1) | (u8[asc + 1] >> 7), ch = (u8[asc + 1] >> 3) & 15;
+      if (aot < 1 || aot > 4 || sfi > 12 || ch < 1 || ch > 7) return null;  // not plain AAC: let the fallback handle it
+      // sample table: sizes, chunk offsets, samples per chunk
+      var stsz = child(stbl, 'stsz'), stsc = child(stbl, 'stsc'), stco = child(stbl, 'stco'), co64 = child(stbl, 'co64');
+      if (!stsz || !stsc || !(stco || co64)) continue;
+      var fixed = dv.getUint32(stsz.body + 4), n = dv.getUint32(stsz.body + 8);
+      var sizeOf = function (i) { return fixed || dv.getUint32(stsz.body + 12 + 4 * i); };
+      var co = stco || co64, nChunks = dv.getUint32(co.body + 4);
+      var chunkOff = function (i) { return stco ? dv.getUint32(co.body + 8 + 4 * i) : dv.getUint32(co.body + 8 + 8 * i) * 4294967296 + dv.getUint32(co.body + 12 + 8 * i); };
+      var nsc = dv.getUint32(stsc.body + 4), sc = [];
+      for (var e = 0; e < nsc; e++) sc.push([dv.getUint32(stsc.body + 8 + 12 * e), dv.getUint32(stsc.body + 12 + 12 * e)]);
+      var total = 0;
+      for (var z = 0; z < n; z++) total += sizeOf(z) + 7;
+      var out = new Uint8Array(total), w = 0, sample = 0;
+      for (var c = 0; c < nChunks && sample < n; c++) {
+        var per = 0;
+        for (var r = 0; r < sc.length; r++) if (sc[r][0] <= c + 1) per = sc[r][1];
+        var off = chunkOff(c);
+        for (var j = 0; j < per && sample < n; j++, sample++) {
+          var sz = sizeOf(sample), fl7 = sz + 7;
+          if (off + sz > ab.byteLength) return null;
+          out[w] = 0xFF; out[w + 1] = 0xF1;
+          out[w + 2] = ((aot - 1) << 6) | (sfi << 2) | (ch >> 2);
+          out[w + 3] = ((ch & 3) << 6) | (fl7 >> 11);
+          out[w + 4] = (fl7 >> 3) & 0xFF;
+          out[w + 5] = ((fl7 & 7) << 5) | 0x1F;
+          out[w + 6] = 0xFC;
+          out.set(u8.subarray(off, off + sz), w + 7);
+          w += fl7; off += sz;
+        }
+      }
+      return sample ? out.buffer.slice(0, w) : null;
+    }
+  } catch (err) { /* malformed: fall through */ }
+  return null;
+}
+function decodeMedia(ab, isVideo) {
+  // A video's sound: unwrap the AAC track first (small, and decodable everywhere).
+  if (isVideo) {
+    var adts = mp4AudioToAdts(ab);
+    if (adts) return decode(adts).catch(function () { return decode(ab); });
+    return decode(ab);
+  }
+  // Audio files (voice memos are .m4a): decode as-is; if refused, try unwrapping.
+  return decode(ab.slice(0)).catch(function () {
+    var adts = mp4AudioToAdts(ab);
+    if (!adts) throw new Error('decode');
+    return decode(adts);
   });
 }
 function monoSlice(buf, s, e) {
@@ -1054,7 +1159,7 @@ function loadClip(blob, kind) {
   var tooBig = blob.size > 250 * 1024 * 1024;
 
   var decoding = tooBig ? Promise.resolve(null)
-    : blob.arrayBuffer().then(decode).catch(function () { return null; });
+    : blob.arrayBuffer().then(function (ab) { return decodeMedia(ab, isVideo); }).catch(function () { return null; });
 
   return decoding.then(function (buf) {
     clip.buf = buf;
