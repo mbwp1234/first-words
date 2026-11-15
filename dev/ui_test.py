@@ -331,6 +331,11 @@ def main() -> int:
         "mono-44k-moov-end": ["-ac", "1", "-ar", "44100"],
         "stereo-48k-faststart": ["-ac", "2", "-ar", "48000", "-movflags", "+faststart"],
         "mono-44k-20s": ["-ac", "1", "-ar", "44100"],
+        # Live Photo videos carry uncompressed PCM, not AAC
+        "livephoto-pcm16le": ["-ac", "1", "-ar", "48000", "-c:a", "pcm_s16le"],
+        "pcm16be-stereo": ["-ac", "2", "-ar", "44100", "-c:a", "pcm_s16be"],
+        "pcm24le": ["-ac", "1", "-ar", "48000", "-c:a", "pcm_s24le"],
+        "pcm-float32": ["-ac", "1", "-ar", "48000", "-c:a", "pcm_f32le"],
     }
     with sync_playwright() as p:
         b = p.webkit.launch()
@@ -345,6 +350,7 @@ def main() -> int:
             pg = b.new_page(viewport={"width": 390, "height": 844})
             pg.goto(base + "/"); pg.wait_for_timeout(800)
             pg.click('#v-list [data-go="add"]'); pg.wait_for_timeout(200)
+            # Same file, but the iPhone picker may hand it over with no type: both must work.
             pg.set_input_files("#file-in", files=[{"name": mov.name, "mimeType": "video/quicktime", "buffer": mov.read_bytes()}])
             pg.wait_for_selector("#c-trim:not([hidden])", timeout=20000); pg.wait_for_timeout(300)
             check(f"{name}: waveform drawn (sound read from the .mov)", "No waveform" not in pg.inner_text("#trim-hint"))
@@ -363,6 +369,20 @@ def main() -> int:
                   rms(sec1) > 1000 and rms(quiet) < 200)
             pg.close()
         b.close()
+
+    real = [Path(x) for x in os.environ.get("FW_REAL_MOVS", "").split(os.pathsep) if x]
+    if real:
+        print("real phone files (FW_REAL_MOVS, never committed)")
+        with sync_playwright() as p:
+            b = p.webkit.launch()
+            for f in real:
+                pg = b.new_page(viewport={"width": 390, "height": 844})
+                pg.goto(base + "/"); pg.wait_for_timeout(800)
+                pg.click('#v-list [data-go="add"]'); pg.set_input_files("#file-in", str(f))
+                pg.wait_for_selector("#c-trim:not([hidden])", timeout=60000); pg.wait_for_timeout(300)
+                check(f"{f.name}: waveform drawn", "No waveform" not in pg.inner_text("#trim-hint"))
+                pg.close()
+            b.close()
 
     print("not mounted")
     tmp2 = Path(tempfile.mkdtemp(prefix="fw-ui2-"))

@@ -15,6 +15,7 @@ from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, Supp
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.loader import async_get_integration
 from homeassistant.util import dt as dt_util
 
 from .api import async_register_views
@@ -114,13 +115,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Cache-bust with the file's mtime so a HACS update can't be served stale.
     stamp = await hass.async_add_executor_job(lambda: int(PANEL_FILE.stat().st_mtime))
+    # The panel defines a per-version element name (custom elements can't be redefined,
+    # so a stable name kept old code alive in the app until a full reload).
+    version = str((await async_get_integration(hass, DOMAIN)).version or "0")
+    element = f"{PANEL_ELEMENT}-{version.replace('.', '-')}"
     async_register_built_in_panel(
         hass,
         component_name="custom",
         sidebar_title=PANEL_TITLE,
         sidebar_icon=PANEL_ICON,
         frontend_url_path=PANEL_URL_PATH,
-        config={"_panel_custom": {"name": PANEL_ELEMENT, "js_url": f"{PANEL_JS_URL}?v={stamp}"}},
+        config={"_panel_custom": {"name": element, "js_url": f"{PANEL_JS_URL}?v={stamp}"}},
         require_admin=False,
         update=True,
     )

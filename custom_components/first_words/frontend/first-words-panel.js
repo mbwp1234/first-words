@@ -11,9 +11,12 @@
  */
 (function () {
 'use strict';
-if (customElements.get('first-words-panel')) return;
-
-var VERSION = '0.2.4';
+var VERSION = '0.2.5';
+/* The element is named per version: a browser can't redefine a custom element, so an
+ * unversioned name kept the OLD code running in the HA app until a full reload. HA asks
+ * for the name matching the installed manifest version (see __init__.py). */
+var TAG = 'first-words-panel-' + VERSION.replace(/\./g, '-');
+if (customElements.get(TAG)) return;
 
 var CSS = [
 ':host{',
@@ -545,107 +548,173 @@ function decode(ab) {
     if (p && p.then) p.then(resolve, reject);
   });
 }
-/* ---- pull the AAC track out of an MP4 / QuickTime (.mov) file as ADTS.
- * WebKit (iPhone Safari, the HA app) refuses decodeAudioData on a .mov even though
- * the sound inside is plain AAC, which it decodes happily once it is unwrapped.
- * Returns an ArrayBuffer of ADTS frames, or null if there's no AAC track to pull. */
-function mp4AudioToAdts(ab) {
-  try {
-    var dv = new DataView(ab), u8 = new Uint8Array(ab);
-    var fourcc = function (o) { return String.fromCharCode(u8[o], u8[o + 1], u8[o + 2], u8[o + 3]); };
-    var boxes = function (start, end) {
-      var out = [], o = start;
-      while (o + 8 <= end) {
-        var size = dv.getUint32(o), type = fourcc(o + 4), hdr = 8;
-        if (size === 1) { size = dv.getUint32(o + 8) * 4294967296 + dv.getUint32(o + 12); hdr = 16; }
-        else if (size === 0) size = end - o;
-        if (size < hdr || o + size > end) break;
-        out.push({ type: type, start: o, body: o + hdr, end: o + size });
-        o += size;
-      }
-      return out;
-    };
-    var child = function (box, type) {
-      var b = boxes(box.body, box.end);
-      for (var i = 0; i < b.length; i++) if (b[i].type === type) return b[i];
-      return null;
-    };
-    var path = function (box, types) {
-      for (var i = 0; box && i < types.length; i++) box = child(box, types[i]);
-      return box;
-    };
-    var moov = boxes(0, ab.byteLength).filter(function (b) { return b.type === 'moov'; })[0];
-    if (!moov) return null;
-    var traks = boxes(moov.body, moov.end).filter(function (b) { return b.type === 'trak'; });
-    for (var t = 0; t < traks.length; t++) {
-      var hdlr = path(traks[t], ['mdia', 'hdlr']);
-      if (!hdlr || fourcc(hdlr.body + 8) !== 'soun') continue;
-      var stbl = path(traks[t], ['mdia', 'minf', 'stbl']);
-      var stsd = stbl && child(stbl, 'stsd');
-      if (!stsd || fourcc(stsd.body + 12) !== 'mp4a') continue;
-      // The esds sits directly in the mp4a entry (MP4) or inside its 'wave' atom (QuickTime): find it by scanning.
-      var entryEnd = stsd.body + 8 + dv.getUint32(stsd.body + 8), esds = -1;
-      for (var k = stsd.body + 16; k + 4 <= entryEnd; k++) if (fourcc(k) === 'esds') { esds = k + 8; break; }
-      if (esds < 0) continue;
-      // ES descriptor -> DecoderConfig -> DecoderSpecificInfo (AudioSpecificConfig)
-      var q = esds, asc = -1;
-      var desc = function () { var tag = u8[q++], len = 0, c; do { c = u8[q++]; len = (len << 7) | (c & 0x7f); } while (c & 0x80); return { tag: tag, len: len }; };
-      var d = desc(); if (d.tag !== 3) continue;
-      var fl = u8[q + 2]; q += 3;
-      if (fl & 0x80) q += 2; if (fl & 0x40) q += 1 + u8[q]; if (fl & 0x20) q += 2;
-      d = desc(); if (d.tag !== 4) continue;
-      q += 13;
-      d = desc(); if (d.tag !== 5) continue;
-      asc = q;
-      var aot = u8[asc] >> 3, sfi = ((u8[asc] & 7) << 1) | (u8[asc + 1] >> 7), ch = (u8[asc + 1] >> 3) & 15;
-      if (aot < 1 || aot > 4 || sfi > 12 || ch < 1 || ch > 7) return null;  // not plain AAC: let the fallback handle it
-      // sample table: sizes, chunk offsets, samples per chunk
-      var stsz = child(stbl, 'stsz'), stsc = child(stbl, 'stsc'), stco = child(stbl, 'stco'), co64 = child(stbl, 'co64');
-      if (!stsz || !stsc || !(stco || co64)) continue;
-      var fixed = dv.getUint32(stsz.body + 4), n = dv.getUint32(stsz.body + 8);
-      var sizeOf = function (i) { return fixed || dv.getUint32(stsz.body + 12 + 4 * i); };
-      var co = stco || co64, nChunks = dv.getUint32(co.body + 4);
-      var chunkOff = function (i) { return stco ? dv.getUint32(co.body + 8 + 4 * i) : dv.getUint32(co.body + 8 + 8 * i) * 4294967296 + dv.getUint32(co.body + 12 + 8 * i); };
-      var nsc = dv.getUint32(stsc.body + 4), sc = [];
-      for (var e = 0; e < nsc; e++) sc.push([dv.getUint32(stsc.body + 8 + 12 * e), dv.getUint32(stsc.body + 12 + 12 * e)]);
-      var total = 0;
-      for (var z = 0; z < n; z++) total += sizeOf(z) + 7;
-      var out = new Uint8Array(total), w = 0, sample = 0;
-      for (var c = 0; c < nChunks && sample < n; c++) {
-        var per = 0;
-        for (var r = 0; r < sc.length; r++) if (sc[r][0] <= c + 1) per = sc[r][1];
-        var off = chunkOff(c);
-        for (var j = 0; j < per && sample < n; j++, sample++) {
-          var sz = sizeOf(sample), fl7 = sz + 7;
-          if (off + sz > ab.byteLength) return null;
-          out[w] = 0xFF; out[w + 1] = 0xF1;
-          out[w + 2] = ((aot - 1) << 6) | (sfi << 2) | (ch >> 2);
-          out[w + 3] = ((ch & 3) << 6) | (fl7 >> 11);
-          out[w + 4] = (fl7 >> 3) & 0xFF;
-          out[w + 5] = ((fl7 & 7) << 5) | 0x1F;
-          out[w + 6] = 0xFC;
-          out.set(u8.subarray(off, off + sz), w + 7);
-          w += fl7; off += sz;
-        }
-      }
-      return sample ? out.buffer.slice(0, w) : null;
+/* ---- pull the sound track out of an MP4 / QuickTime (.mov) file ourselves.
+ * WebKit (iPhone Safari, the HA app) refuses decodeAudioData on any .mov, though
+ * the sound inside is something it handles once unwrapped:
+ *   - ordinary iPhone videos carry AAC  -> rewrapped as ADTS and decoded
+ *   - Live Photo videos carry plain PCM -> copied straight into an AudioBuffer
+ * Handles moov first or last, stco/co64, esds direct or inside QuickTime's 'wave',
+ * and QuickTime sound descriptions v0/v1/v2 (lpcm, sowt, twos, in24, in32, fl32, fl64). */
+function mp4Sound(ab) {
+  var dv = new DataView(ab), u8 = new Uint8Array(ab);
+  var fourcc = function (o) { return String.fromCharCode(u8[o], u8[o + 1], u8[o + 2], u8[o + 3]); };
+  var boxes = function (start, end) {
+    var out = [], o = start;
+    while (o + 8 <= end) {
+      var size = dv.getUint32(o), type = fourcc(o + 4), hdr = 8;
+      if (size === 1) { size = dv.getUint32(o + 8) * 4294967296 + dv.getUint32(o + 12); hdr = 16; }
+      else if (size === 0) size = end - o;
+      if (size < hdr || o + size > end) break;
+      out.push({ type: type, start: o, body: o + hdr, end: o + size });
+      o += size;
     }
-  } catch (err) { /* malformed: fall through */ }
+    return out;
+  };
+  var child = function (box, type) {
+    var b = boxes(box.body, box.end);
+    for (var i = 0; i < b.length; i++) if (b[i].type === type) return b[i];
+    return null;
+  };
+  var path = function (box, types) {
+    for (var i = 0; box && i < types.length; i++) box = child(box, types[i]);
+    return box;
+  };
+  var moov = boxes(0, ab.byteLength).filter(function (b) { return b.type === 'moov'; })[0];
+  if (!moov) return null;
+  var traks = boxes(moov.body, moov.end).filter(function (b) { return b.type === 'trak'; });
+  for (var t = 0; t < traks.length; t++) {
+    var hdlr = path(traks[t], ['mdia', 'hdlr']);
+    if (!hdlr || fourcc(hdlr.body + 8) !== 'soun') continue;
+    var stbl = path(traks[t], ['mdia', 'minf', 'stbl']);
+    var stsd = stbl && child(stbl, 'stsd');
+    var stsz = stbl && child(stbl, 'stsz'), stsc = stbl && child(stbl, 'stsc');
+    var co = stbl && (child(stbl, 'stco') || child(stbl, 'co64'));
+    if (!stsd || !stsz || !stsc || !co) continue;
+    var e = stsd.body + 8;  // first sample entry
+    return {
+      dv: dv, u8: u8, fourcc: fourcc, entry: e, entryEnd: e + dv.getUint32(e), format: fourcc(e + 4),
+      fixedSize: dv.getUint32(stsz.body + 4), count: dv.getUint32(stsz.body + 8),
+      sizeAt: function (i) { return dv.getUint32(stsz.body + 12 + 4 * i); },
+      chunks: (function () {
+        var n = dv.getUint32(co.body + 4), wide = co.type === 'co64', out = [];
+        var nsc = dv.getUint32(stsc.body + 4), sc = [];
+        for (var k = 0; k < nsc; k++) sc.push([dv.getUint32(stsc.body + 8 + 12 * k), dv.getUint32(stsc.body + 12 + 12 * k)]);
+        for (var c = 0, r = 0; c < n; c++) {
+          while (r + 1 < sc.length && sc[r + 1][0] <= c + 1) r++;
+          out.push({ off: wide ? dv.getUint32(co.body + 8 + 8 * c) * 4294967296 + dv.getUint32(co.body + 12 + 8 * c)
+                               : dv.getUint32(co.body + 8 + 4 * c), samples: sc.length ? sc[r][1] : 0 });
+        }
+        return out;
+      })()
+    };
+  }
   return null;
 }
+/* AAC -> ArrayBuffer of ADTS frames (decodeAudioData accepts it everywhere), or null. */
+function mp4AudioToAdts(ab) {
+  try {
+    var s = mp4Sound(ab);
+    if (!s || s.format !== 'mp4a') return null;
+    var u8 = s.u8, esds = -1;
+    for (var k = s.entry + 16; k + 4 <= s.entryEnd; k++) if (s.fourcc(k) === 'esds') { esds = k + 8; break; }
+    if (esds < 0) return null;
+    var q = esds;
+    var desc = function () { var tag = u8[q++], len = 0, c; do { c = u8[q++]; len = (len << 7) | (c & 0x7f); } while (c & 0x80); return tag; };
+    if (desc() !== 3) return null;
+    var fl = u8[q + 2]; q += 3;
+    if (fl & 0x80) q += 2; if (fl & 0x40) q += 1 + u8[q]; if (fl & 0x20) q += 2;
+    if (desc() !== 4) return null;
+    q += 13;
+    if (desc() !== 5) return null;
+    var aot = u8[q] >> 3, sfi = ((u8[q] & 7) << 1) | (u8[q + 1] >> 7), ch = (u8[q + 1] >> 3) & 15;
+    if (aot < 1 || aot > 4 || sfi > 12 || ch < 1 || ch > 7) return null;
+    var size = function (i) { return s.fixedSize || s.sizeAt(i); };
+    var total = 0;
+    for (var z = 0; z < s.count; z++) total += size(z) + 7;
+    var out = new Uint8Array(total), w = 0, sample = 0;
+    for (var c = 0; c < s.chunks.length && sample < s.count; c++) {
+      var off = s.chunks[c].off;
+      for (var j = 0; j < s.chunks[c].samples && sample < s.count; j++, sample++) {
+        var sz = size(sample), fl7 = sz + 7;
+        if (off + sz > ab.byteLength) return null;
+        out[w] = 0xFF; out[w + 1] = 0xF1;
+        out[w + 2] = ((aot - 1) << 6) | (sfi << 2) | (ch >> 2);
+        out[w + 3] = ((ch & 3) << 6) | (fl7 >> 11);
+        out[w + 4] = (fl7 >> 3) & 0xFF;
+        out[w + 5] = ((fl7 & 7) << 5) | 0x1F;
+        out[w + 6] = 0xFC;
+        out.set(u8.subarray(off, off + sz), w + 7);
+        w += fl7; off += sz;
+      }
+    }
+    return sample ? out.buffer.slice(0, w) : null;
+  } catch (err) { return null; }
+}
+/* Uncompressed PCM (Live Photos) -> AudioBuffer, or null. No decoder involved at all. */
+function mp4Pcm(ab) {
+  try {
+    var s = mp4Sound(ab);
+    if (!s) return null;
+    var dv = s.dv, e = s.entry, f = s.format, ver = dv.getUint16(e + 16);
+    var rate, ch, bits, isFloat = false, big = false;
+    if (ver === 2) {
+      rate = dv.getFloat64(e + 40); ch = dv.getUint32(e + 48); bits = dv.getUint32(e + 56);
+      var flags = dv.getUint32(e + 60);
+      isFloat = !!(flags & 1); big = !!(flags & 2);
+      if (f !== 'lpcm') { isFloat = f === 'fl32' || f === 'fl64'; big = f !== 'sowt'; }
+    } else {
+      ch = dv.getUint16(e + 24); bits = dv.getUint16(e + 26); rate = dv.getUint32(e + 32) / 65536;
+      if (f === 'sowt') big = false;
+      else if (f === 'twos') big = true;
+      else if (f === 'in24') { bits = 24; big = true; }
+      else if (f === 'in32') { bits = 32; big = true; }
+      else if (f === 'fl32') { bits = 32; isFloat = true; big = true; }
+      else if (f === 'fl64') { bits = 64; isFloat = true; big = true; }
+      else return null;
+      // 'wave'/'enda' atom can say little-endian
+      for (var k = e + 36; k + 4 <= s.entryEnd; k++) if (s.fourcc(k) === 'enda') { big = dv.getUint16(k + 4) === 0; break; }
+    }
+    if (['lpcm', 'sowt', 'twos', 'in24', 'in32', 'fl32', 'fl64'].indexOf(f) < 0) return null;
+    if (!(rate >= 8000 && rate <= 192000) || ch < 1 || ch > 8 || [16, 24, 32, 64].indexOf(bits) < 0) return null;
+    var bps = bits / 8, bpf = bps * ch, frames = 0, parts = [];
+    for (var c = 0; c < s.chunks.length; c++) {
+      // For uncompressed sound QuickTime counts a "sample" as one frame (size 1 or one frame's bytes).
+      var n = s.chunks[c].samples, bytes = (s.fixedSize === 1 || s.fixedSize === bpf || !s.fixedSize) ? n * bpf : n * s.fixedSize;
+      if (s.chunks[c].off + bytes > ab.byteLength) bytes = Math.max(0, ab.byteLength - s.chunks[c].off);
+      parts.push([s.chunks[c].off, Math.floor(bytes / bpf)]);
+      frames += Math.floor(bytes / bpf);
+    }
+    if (!frames) return null;
+    var buf = getCtx().createBuffer(ch, frames, rate), data = [];
+    for (var cc = 0; cc < ch; cc++) data.push(buf.getChannelData(cc));
+    var le = !big, at = 0;
+    var read = bits === 16 ? function (o) { return dv.getInt16(o, le) / 32768; }
+      : bits === 24 ? function (o) {
+          var b0 = dv.getUint8(o), b1 = dv.getUint8(o + 1), b2 = dv.getUint8(o + 2);
+          var v = le ? (b2 << 16) | (b1 << 8) | b0 : (b0 << 16) | (b1 << 8) | b2;
+          return (v & 0x800000 ? v - 0x1000000 : v) / 8388608; }
+      : bits === 32 ? (isFloat ? function (o) { return dv.getFloat32(o, le); } : function (o) { return dv.getInt32(o, le) / 2147483648; })
+      : function (o) { return dv.getFloat64(o, le); };
+    for (var p = 0; p < parts.length; p++) {
+      var o = parts[p][0];
+      for (var fr = 0; fr < parts[p][1]; fr++, at++) {
+        for (var cn = 0; cn < ch; cn++, o += bps) data[cn][at] = read(o);
+      }
+    }
+    return buf;
+  } catch (err) { return null; }
+}
 function decodeMedia(ab, isVideo) {
-  // A video's sound: unwrap the AAC track first (small, and decodable everywhere).
-  if (isVideo) {
+  var unwrap = function () {
+    var pcm = mp4Pcm(ab);
+    if (pcm) return Promise.resolve(pcm);
     var adts = mp4AudioToAdts(ab);
-    if (adts) return decode(adts).catch(function () { return decode(ab); });
-    return decode(ab);
-  }
-  // Audio files (voice memos are .m4a): decode as-is; if refused, try unwrapping.
-  return decode(ab.slice(0)).catch(function () {
-    var adts = mp4AudioToAdts(ab);
-    if (!adts) throw new Error('decode');
-    return decode(adts);
-  });
+    return adts ? decode(adts) : Promise.reject(new Error('decode'));
+  };
+  // Videos: unwrap first (small, and works in every engine); the browser's own decoder is the fallback.
+  if (isVideo) return unwrap().catch(function () { return decode(ab); });
+  // Audio files (voice memos are .m4a): the browser first; unwrap if it refuses.
+  return decode(ab.slice(0)).catch(unwrap);
 }
 function monoSlice(buf, s, e) {
   var sr = buf.sampleRate, a = Math.max(0, Math.floor(s * sr)), b = Math.min(buf.length, Math.floor(e * sr));
@@ -1969,5 +2038,7 @@ class FirstWordsPanel extends HTMLElement {
     this._app.setNarrow(this._narrow);
   }
 }
-customElements.define('first-words-panel', FirstWordsPanel);
+customElements.define(TAG, FirstWordsPanel);
+// Unversioned alias for the dev harness and anything else that wants "whatever is loaded".
+if (!customElements.get('first-words-panel')) customElements.define('first-words-panel', class extends FirstWordsPanel {});
 })();

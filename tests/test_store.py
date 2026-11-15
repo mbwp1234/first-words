@@ -405,3 +405,16 @@ def test_both_label_matches_panel_rule():
     assert const.both_label([{"label": "Mama"}, {"label": "Dada"}]) == "Mama & Dada"
     assert const.both_label([{"label": "A"}, {"label": "B"}, {"label": "C"}]) == "A, B & C"
     assert const.both_label([{"label": "A"}]) == ""
+
+
+def test_panel_version_matches_manifest():
+    """HA asks for first-words-panel-<manifest version>; the JS defines first-words-panel-<VERSION>.
+    If they drift, the sidebar opens an element nobody defines (a blank page)."""
+    import re as _re
+    root = Path(__file__).parents[1] / "custom_components/first_words"
+    manifest = json.loads((root / "manifest.json").read_text())["version"]
+    js = (root / "frontend/first-words-panel.js").read_text()
+    m = _re.search(r"var VERSION = '([^']+)';", js)
+    assert m and m.group(1) == manifest, (m and m.group(1), manifest)
+    assert "var TAG = 'first-words-panel-' + VERSION.replace" in js
+    assert "customElements.define(TAG," in js
