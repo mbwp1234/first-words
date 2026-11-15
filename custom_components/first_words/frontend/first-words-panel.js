@@ -11,7 +11,7 @@
  */
 (function () {
 'use strict';
-var VERSION = '0.3.4';
+var VERSION = '0.3.5';
 /* The element is named per version: a browser can't redefine a custom element, so an
  * unversioned name kept the OLD code running in the HA app until a full reload. HA asks
  * for the name matching the installed manifest version (see __init__.py). */
@@ -482,7 +482,7 @@ function req(method, path, body, headers, ms) {
   if (body !== undefined) init.body = body;
   var ac = window.AbortController ? new AbortController() : null;
   if (ac) init.signal = ac.signal;
-  var limit = ms || (body instanceof Blob ? 120000 : 30000);
+  var limit = ms || ((body instanceof Blob || body instanceof ArrayBuffer) ? 120000 : 30000);
   return Promise.resolve().then(function () {
     return within(host.hass.fetchWithAuth('/api/first_words' + path, init), limit, new Error('timeout'))
       .catch(function (e) { if (ac) try { ac.abort(); } catch (x) {} throw e; });
@@ -1936,14 +1936,36 @@ function uploadVideo(file, wordId, token, done) {
       { name: file.name || 'video.mp4', mime: file.type || 'video/mp4', size: file.size })
       .then(function (r) { live(); S.upload.token = r.token; rememberVideo(file, wordId, r.token); });
   }
+  /* Each piece is read into memory and sent as plain bytes. Inside the HA app (WKWebView)
+   * a fetch whose body is a slice of a picked or IndexedDB-stored File never went out —
+   * the bar sat at 0% while the server had already answered the start (v0.3.4 log). */
+  function readPiece(blob) {
+    if (blob.arrayBuffer) return blob.arrayBuffer();
+    return new Promise(function (resolve, reject) {
+      var fr = new FileReader();
+      fr.onload = function () { resolve(fr.result); };
+      fr.onerror = function () { reject(fr.error || new Error('read')); };
+      fr.readAsArrayBuffer(blob);
+    });
+  }
+  var piece = 0;
   function next() {
     live();
-    if (stage === 'contacting') { clearInterval(ticker); step('sending'); }
-    if (offset >= file.size) return req('POST', '/upload/' + S.upload.token + '/finish');
-    var end = Math.min(file.size, offset + CHUNK);
-    return req('PUT', '/upload/' + S.upload.token + '?offset=' + offset, file.slice(offset, end),
-      { 'Content-Type': 'application/octet-stream' })
+    if (stage === 'contacting') { clearInterval(ticker); stage = 'sending'; setUp(0, 'Sending video… 0%'); }
+    if (offset >= file.size) { step('finishing'); return req('POST', '/upload/' + S.upload.token + '/finish'); }
+    var end = Math.min(file.size, offset + CHUNK), first = piece === 0;
+    piece++;
+    if (first) step('reading piece 1');
+    return within(readPiece(file.slice(offset, end)), 30000,
+                  new Error("This phone couldn't read the video back. Cancel, then attach it again."))
+      .then(function (ab) {
+        live();
+        if (first) step('sending piece 1 (' + mb(ab.byteLength) + ')');
+        return req('PUT', '/upload/' + S.upload.token + '?offset=' + offset, ab,
+          { 'Content-Type': 'application/octet-stream' });
+      })
       .then(function (r) {
+        if (first) step('piece 1 landed');
         offset = r.received; tries = 0;
         setUp(offset / file.size);
         return next();
