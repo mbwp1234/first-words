@@ -418,3 +418,5 @@ def test_panel_version_matches_manifest():
     assert m and m.group(1) == manifest, (m and m.group(1), manifest)
     assert "var TAG = 'first-words-panel-' + VERSION.replace" in js
     assert "customElements.define(TAG," in js
+    init = (root / "__init__.py").read_text()
+    assert "_panel_file_info" in init and "var VERSION = '" in init, "HA must read the version from the panel file"

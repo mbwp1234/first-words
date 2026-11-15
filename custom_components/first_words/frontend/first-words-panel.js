@@ -11,7 +11,7 @@
  */
 (function () {
 'use strict';
-var VERSION = '0.2.5';
+var VERSION = '0.2.6';
 /* The element is named per version: a browser can't redefine a custom element, so an
  * unversioned name kept the OLD code running in the HA app until a full reload. HA asks
  * for the name matching the installed manifest version (see __init__.py). */
@@ -1453,8 +1453,20 @@ $('sel-play').addEventListener('click', function () {
   getCtx();
   A.previewing = true;
   setPlayIcon($('sel-play'), true);
-  if (c.buf && !c.isVideo) {
-    playBuffer(c.buf, c.start, c.end, 'preview', showPh, function () { A.previewing = false; setPlayIcon($('sel-play'), false); hidePh(); });
+  if (c.buf) {
+    // Play the sound we decoded ourselves. For a video, the picture runs alongside, muted:
+    // browsers that can show a Live Photo often can't play its PCM sound, so the element
+    // itself may be silent even though the clip has audio.
+    if (c.isVideo) {
+      var v = c.el;
+      v.muted = true;
+      try { v.currentTime = c.start; } catch (e) {}
+      var vp = v.play(); if (vp && vp.catch) vp.catch(function () {});
+    }
+    playBuffer(c.buf, c.start, c.end, 'preview', showPh, function () {
+      A.previewing = false; setPlayIcon($('sel-play'), false); hidePh();
+      if (c.isVideo) { c.el.pause(); try { c.el.currentTime = c.start; } catch (e) {} }
+    });
     return;
   }
   var el = c.el;
@@ -1476,7 +1488,7 @@ function stopPreview() {
   cancelAnimationFrame(A.raf);
   var c = A.clip;
   if (c && (c.isVideo || !c.buf)) c.el.pause();
-  else if (P.id === 'preview') stopPlay();
+  if (P.id === 'preview') stopPlay();
   setPlayIcon($('sel-play'), false);
   $('sel-play').setAttribute('aria-label', 'Play the clip');
   hidePh();
@@ -2001,7 +2013,7 @@ return {
     document.removeEventListener('visibilitychange', onVisible);
     clearInterval(flushTimer);
   },
-  _debug: { S: S, A: A, Q: Q, flush: flushQueue }
+  _debug: { S: S, A: A, P: P, Q: Q, flush: flushQueue }
 };
 }
 

@@ -354,6 +354,12 @@ def main() -> int:
             pg.set_input_files("#file-in", files=[{"name": mov.name, "mimeType": "video/quicktime", "buffer": mov.read_bytes()}])
             pg.wait_for_selector("#c-trim:not([hidden])", timeout=20000); pg.wait_for_timeout(300)
             check(f"{name}: waveform drawn (sound read from the .mov)", "No waveform" not in pg.inner_text("#trim-hint"))
+            pg.click("#sel-play"); pg.wait_for_timeout(300)
+            st = pg.evaluate("""() => { const a = document.querySelector('first-words-panel')._app._debug, v = a.A.clip.el;
+              return { audio: a.P.id, muted: v.muted, playing: !v.paused }; }""")
+            check(f"{name}: preview plays our decoded sound with the picture muted alongside ({st})",
+                  st["audio"] == "preview" and st["muted"] and st["playing"])
+            pg.click("#sel-play"); pg.wait_for_timeout(100)
             pg.fill("#f-word", "w-" + name); pg.click("#save")
             pg.wait_for_selector("#v-detail:not([hidden])", timeout=20000)
             pg.wait_for_function("() => document.querySelector('first-words-panel').shadowRoot.getElementById('upbar').hidden", timeout=30000)

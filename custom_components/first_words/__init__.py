@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,7 +16,6 @@ from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, Supp
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.dispatcher import async_dispatcher_send
-from homeassistant.loader import async_get_integration
 from homeassistant.util import dt as dt_util
 
 from .api import async_register_views
@@ -66,6 +66,12 @@ class FirstWordsRuntime:
     offsite: str = ""
 
 
+def _panel_file_info() -> tuple[int, str]:
+    text = PANEL_FILE.read_text(encoding="utf-8")
+    m = re.search(r"var VERSION = '([0-9A-Za-z.]+)';", text)
+    return int(PANEL_FILE.stat().st_mtime), (m.group(1) if m else "0")
+
+
 def get_runtime(hass: HomeAssistant) -> FirstWordsRuntime | None:
     return hass.data.get(DOMAIN)
 
@@ -114,10 +120,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _ROUTES_REGISTERED = True
 
     # Cache-bust with the file's mtime so a HACS update can't be served stale.
-    stamp = await hass.async_add_executor_job(lambda: int(PANEL_FILE.stat().st_mtime))
+    stamp, version = await hass.async_add_executor_job(_panel_file_info)
     # The panel defines a per-version element name (custom elements can't be redefined,
-    # so a stable name kept old code alive in the app until a full reload).
-    version = str((await async_get_integration(hass, DOMAIN)).version or "0")
+    # so a stable name kept old code alive in the app until a full reload). The version is
+    # read from the panel file itself, not the manifest: HA caches the manifest until a
+    # restart, so a reload after a panel-only update would ask for the old name.
     element = f"{PANEL_ELEMENT}-{version.replace('.', '-')}"
     async_register_built_in_panel(
         hass,
