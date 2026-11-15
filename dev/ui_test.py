@@ -461,7 +461,11 @@ def main() -> int:
         pg = b.new_page(viewport={"width": 390, "height": 844})
         pg.add_init_script("delete Navigator.prototype.mediaDevices; delete Navigator.prototype.audioSession;"
                            "Object.defineProperty(navigator, 'mediaDevices', {value: undefined});"
-                           "Object.defineProperty(navigator, 'audioSession', {value: undefined});")
+                           "Object.defineProperty(navigator, 'audioSession', {value: undefined});"
+                           # and WebKit never finishing a big video into IndexedDB
+                           "(() => { const t = IDBDatabase.prototype.transaction; IDBDatabase.prototype.transaction = function (n, m) {"
+                           "  if (m !== 'readwrite') return t.apply(this, arguments);"
+                           "  const req = {}; return { objectStore: () => ({ put: () => req, delete: () => req }) }; }; })();")
         pg.goto(base + "/"); pg.wait_for_timeout(800)
         check("init script removed the APIs", pg.evaluate("() => !navigator.mediaDevices && !navigator.audioSession"))
         pg.click('#v-list [data-go="add"]'); pg.wait_for_timeout(200)
@@ -479,6 +483,12 @@ def main() -> int:
               st["audio"] == "preview" and st["hush"])
         pg.click("#sel-play"); pg.wait_for_timeout(200)
         check("and stops with it", pg.evaluate("() => { const h = document.querySelector('first-words-panel')._app._debug.hush(); return h.paused; }"))
+        pg.fill("#f-word", "camera-word"); pg.click("#save")
+        pg.wait_for_selector("#v-detail:not([hidden])", timeout=20000)
+        t0 = time.time()
+        pg.wait_for_function("() => document.querySelector('first-words-panel').shadowRoot.getElementById('upbar').hidden", timeout=30000)
+        w = next(x for x in json.loads((root / "first-words.json").read_text())["words"] if x["word"] == "camera-word")
+        check(f"video uploads although the offline copy never finishes ({time.time() - t0:.1f}s)", bool(w.get("videoFile")))
         pg.close()
         b.close()
 

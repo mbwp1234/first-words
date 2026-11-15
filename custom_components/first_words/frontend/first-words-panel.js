@@ -11,7 +11,7 @@
  */
 (function () {
 'use strict';
-var VERSION = '0.3.1';
+var VERSION = '0.3.2';
 /* The element is named per version: a browser can't redefine a custom element, so an
  * unversioned name kept the OLD code running in the HA app until a full reload. HA asks
  * for the name matching the installed manifest version (see __init__.py). */
@@ -468,11 +468,24 @@ function uuid() {
 }
 
 /* ---- transport */
-function req(method, path, body, headers) {
+/* A promise that settles within ms: resolves `fallback` (or rejects, if fallback is an Error). */
+function within(p, ms, fallback) {
+  return new Promise(function (resolve, reject) {
+    var t = setTimeout(function () { fallback instanceof Error ? reject(fallback) : resolve(fallback); }, ms);
+    p.then(function (v) { clearTimeout(t); resolve(v); }, function (e) { clearTimeout(t); reject(e); });
+  });
+}
+/* Every request has a deadline: a fetch that never answers (a phone dropping off Wi-Fi
+ * mid-upload) must surface as a retryable failure, never as a bar that sits for ever. */
+function req(method, path, body, headers, ms) {
   var init = { method: method, headers: headers || {} };
   if (body !== undefined) init.body = body;
+  var ac = window.AbortController ? new AbortController() : null;
+  if (ac) init.signal = ac.signal;
+  var limit = ms || (body instanceof Blob ? 120000 : 30000);
   return Promise.resolve().then(function () {
-    return host.hass.fetchWithAuth('/api/first_words' + path, init);
+    return within(host.hass.fetchWithAuth('/api/first_words' + path, init), limit, new Error('timeout'))
+      .catch(function (e) { if (ac) try { ac.abort(); } catch (x) {} throw e; });
   }).then(function (r) {
     return r.text().then(function (t) {
       var j = null;
@@ -1860,7 +1873,9 @@ function rememberVideo(file, wordId, token) {
   var key = 'v_' + wordId, item = { key: key, type: 'video', wordId: wordId, video: file, token: token || '',
     queuedAt: new Date().toISOString() };
   S.pending = S.pending.filter(function (x) { return x.key !== key; }).concat([item]);
-  return Q.put(item).catch(function () {});
+  // Keeping a copy on the phone is a safety net, not a step: WebKit can take for ever (or
+  // never finish) copying a large camera video into IndexedDB, so it gets a few seconds.
+  return within(Q.put(item).catch(function () {}), 4000);
 }
 function forgetVideo(wordId) {
   var key = 'v_' + wordId;
@@ -1873,6 +1888,7 @@ function uploadVideo(file, wordId, token, done) {
   setUp(0, 'Starting video upload…');
   var offset = 0, tries = 0;
   function begin() {
+    setUp(0, 'Contacting Home Assistant…');
     if (S.upload.token) {
       return req('GET', '/upload/' + S.upload.token).then(function (r) { offset = r.received; }, function (e) {
         if (e.status === 404) { S.upload.token = ''; return begin(); }
@@ -1881,7 +1897,7 @@ function uploadVideo(file, wordId, token, done) {
     }
     return jsonReq('POST', '/video/' + encodeURIComponent(wordId) + '/start',
       { name: file.name || 'video.mp4', mime: file.type || 'video/mp4', size: file.size })
-      .then(function (r) { S.upload.token = r.token; return rememberVideo(file, wordId, r.token); });
+      .then(function (r) { S.upload.token = r.token; rememberVideo(file, wordId, r.token); });
   }
   function next() {
     if (offset >= file.size) return req('POST', '/upload/' + S.upload.token + '/finish');
