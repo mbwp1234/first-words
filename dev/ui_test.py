@@ -455,6 +455,31 @@ def main() -> int:
             check(f"{name}: clip has the tone after 1 s (rms {rms(sec1):.0f}) and silence before (rms {rms(quiet):.0f})",
                   rms(sec1) > 1000 and rms(quiet) < 200)
             pg.close()
+
+        # The HA app on its http:// internal URL: no microphone API and no audioSession.
+        print("insecure page (HA app on http://)")
+        pg = b.new_page(viewport={"width": 390, "height": 844})
+        pg.add_init_script("delete Navigator.prototype.mediaDevices; delete Navigator.prototype.audioSession;"
+                           "Object.defineProperty(navigator, 'mediaDevices', {value: undefined});"
+                           "Object.defineProperty(navigator, 'audioSession', {value: undefined});")
+        pg.goto(base + "/"); pg.wait_for_timeout(800)
+        check("init script removed the APIs", pg.evaluate("() => !navigator.mediaDevices && !navigator.audioSession"))
+        pg.click('#v-list [data-go="add"]'); pg.wait_for_timeout(200)
+        with pg.expect_file_chooser(timeout=3000) as fc:
+            pg.click("#rec-start")
+        check("record button opens the camera instead of failing", fc.value is not None)
+        mov = tmp / "IMG_livephoto-pcm16le.MOV"
+        fc.value.set_files(str(mov))
+        pg.wait_for_selector("#c-trim:not([hidden])", timeout=20000); pg.wait_for_timeout(300)
+        check("camera clip reaches the trim view", "No waveform" not in pg.inner_text("#trim-hint"))
+        pg.click("#sel-play"); pg.wait_for_timeout(400)
+        st = pg.evaluate("""() => { const a = document.querySelector('first-words-panel')._app._debug, h = a.hush();
+          return { audio: a.P.id, hush: !!h && !h.paused }; }""")
+        check(f"no audioSession: a silent media element plays alongside the Web Audio ({st})",
+              st["audio"] == "preview" and st["hush"])
+        pg.click("#sel-play"); pg.wait_for_timeout(200)
+        check("and stops with it", pg.evaluate("() => { const h = document.querySelector('first-words-panel')._app._debug.hush(); return h.paused; }"))
+        pg.close()
         b.close()
 
     real = [Path(x) for x in os.environ.get("FW_REAL_MOVS", "").split(os.pathsep) if x]
