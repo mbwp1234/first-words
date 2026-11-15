@@ -1,0 +1,14 @@
+export_zip:
+make_keepsake:
+import_json:
+  fields:
+    source:
+      required: true
+      example: "/media/FirstWords/import/Robin First Words backup 2026-11-20.zip"
+      selector:
+        text:
+    clips:
+      required: false
+      example: "/media/FirstWords/import/audio"
+      selector:
+        text:

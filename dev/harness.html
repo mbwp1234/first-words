@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>First Words harness</title>
+<style>html,body{margin:0;height:100%}</style>
+</head><body>
+<script>
+/* A stand-in for the `hass` object HA hands a custom panel: just the parts the panel uses. */
+window.fakeHass = {
+  user: { name: 'Alex', id: 'u1' },
+  auth: { data: { hassUrl: '' } },
+  fetchWithAuth: function (path, init) { return fetch(path, init); },
+  callWS: function (msg) {
+    if (msg.type === 'auth/sign_path') return Promise.resolve({ path: msg.path + (msg.path.indexOf('?') < 0 ? '?' : '&') + 'authSig=dev' });
+    return Promise.reject(new Error('unsupported ' + msg.type));
+  }
+};
+</script>
+<script src="/first_words_panel"></script>
+<script>
+var el = document.createElement('first-words-panel');
+el.hass = fakeHass; el.narrow = true;
+document.body.appendChild(el);
+</script>
+</body></html>

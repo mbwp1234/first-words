@@ -1,0 +1,270 @@
+"""Drive the panel in headless Chromium at 390x844 against dev/server.py.
+
+    python dev/ui_test.py            (starts its own server on a temp dir)
+
+Adapted from the Apps Script harness (t.py): list, play, video upload, overview
+drag, end-handle drag, preview, save, edit, delete, keepsake/zip, plus the new
+offline queue and the not-mounted banner. Exits non-zero on any failed check.
+"""
+from __future__ import annotations
+
+import io
+import json
+import math
+import os
+import shutil
+import struct
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import urllib.request
+import wave
+from pathlib import Path
+
+from playwright.sync_api import sync_playwright
+
+HERE = Path(__file__).parent
+OUT = HERE / "out"
+OUT.mkdir(exist_ok=True)
+FAILS: list[str] = []
+
+
+def check(label: str, cond) -> None:
+    if callable(cond):  # never trust an argument that might be an uncalled function
+        cond = cond()
+    print(("  ok   " if cond else "  FAIL ") + label)
+    if not cond:
+        FAILS.append(label)
+
+
+def tone_wav(seconds=1.0, sr=8000, freq=440) -> bytes:
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(sr)
+        w.writeframes(b"".join(struct.pack("<h", int(8000 * math.sin(2 * math.pi * freq * i / sr)))
+                               for i in range(int(seconds * sr))))
+    return buf.getvalue()
+
+
+def make_video(path: Path) -> None:
+    import imageio_ffmpeg
+    ff = imageio_ffmpeg.get_ffmpeg_exe()
+    # Lossless noise on purpose: ~9 MB that won't compress, so the upload needs several 4 MB chunks.
+    subprocess.run([ff, "-y", "-loglevel", "error", "-f", "lavfi",
+                    "-i", "nullsrc=s=160x120:r=15,geq=random(1)*255:128:128",
+                    "-f", "lavfi", "-i", "sine=frequency=440:duration=20", "-t", "20", "-c:v", "libx264",
+                    "-qp", "0", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(path)], check=True)
+    assert path.stat().st_size > 8 * 1024 * 1024, f"test video only {path.stat().st_size} bytes"
+
+
+def start_server(data: str, port: int, mounted=True):
+    sys.path.insert(0, str(HERE))
+    import asyncio
+    from aiohttp import web
+    import server as dev
+
+    app = dev.build_app(data, mounted=mounted)
+    loop = asyncio.new_event_loop()
+    runner = web.AppRunner(app)
+
+    def run():
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(runner.setup())
+        loop.run_until_complete(web.TCPSite(runner, "127.0.0.1", port).start())
+        loop.run_forever()
+
+    threading.Thread(target=run, daemon=True).start()
+    for _ in range(50):
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/dev/state")
+            return
+        except Exception:
+            time.sleep(0.1)
+    raise SystemExit("dev server did not start")
+
+
+def post_word(base: str, meta: dict, audio: bytes | None) -> dict:
+    boundary = "----fw"
+    parts = [f'--{boundary}\r\nContent-Disposition: form-data; name="meta"\r\n\r\n{json.dumps(meta)}\r\n'.encode()]
+    if audio:
+        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="audio"; filename="clip.wav"\r\n'
+                     f"Content-Type: audio/wav\r\n\r\n".encode() + audio + b"\r\n")
+    parts.append(f"--{boundary}--\r\n".encode())
+    req = urllib.request.Request(base + "/api/first_words/words", data=b"".join(parts), method="POST",
+                                 headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+    return json.loads(urllib.request.urlopen(req).read())
+
+
+def dev_state(base: str, **kw) -> dict:
+    req = urllib.request.Request(base + "/dev/state", data=json.dumps(kw).encode(), method="POST",
+                                 headers={"Content-Type": "application/json"})
+    return json.loads(urllib.request.urlopen(req).read())
+
+
+def main() -> int:
+    tmp = Path(tempfile.mkdtemp(prefix="fw-ui-"))
+    port = 8790
+    base = f"http://127.0.0.1:{port}"
+    start_server(str(tmp), port)
+    root = tmp / "First Words"
+    video = tmp / "clip.mp4"
+    make_video(video)
+    memo = tmp / "memo.wav"
+    memo.write_bytes(tone_wav(4.0, 16000, 300))
+
+    a1 = post_word(base, {"id": "a1", "word": "mama", "sounded": "mamama", "date": "2026-09-02",
+                          "heardBy": "Mama", "notes": "Bath time", "clipStart": 0, "clipEnd": 1}, tone_wav())
+    post_word(base, {"id": "a2", "word": "dada", "date": "2026-09-18", "heardBy": "Dada"}, None)
+
+    errs: list[str] = []
+    with sync_playwright() as p:
+        b = p.chromium.launch(args=["--autoplay-policy=no-user-gesture-required"])
+        pg = b.new_page(viewport={"width": 390, "height": 844}, device_scale_factor=2, has_touch=True)
+        pg.on("console", lambda m: m.type == "error" and "status of 503" not in m.text and errs.append(m.text))
+        pg.on("pageerror", lambda e: errs.append("PAGEERROR " + str(e)))
+        pg.goto(base + "/")
+        pg.wait_for_function("() => { const e = document.querySelector('first-words-panel'); "
+                             "return e && e.shadowRoot && /words? so far/.test(e.shadowRoot.getElementById('list-sub').textContent); }",
+                             timeout=10000)
+        print("list")
+        check("list sub shows 2 words", "2 words so far" in pg.inner_text("#list-sub"))
+        check("title is the child's name", pg.inner_text("#list-title") == "Robin")
+        check("CTA uses the child's name", pg.inner_text("#cta-label") == "Robin said something new")
+        check("first-word badge on the oldest", pg.locator(".chip.first").count() == 1)
+        bottom = pg.locator("#v-list .bottombar").bounding_box()
+        check("bottom bar pinned to the viewport bottom", abs(bottom["y"] + bottom["height"] - 844) < 2)
+        pg.screenshot(path=str(OUT / "s1_list.png"))
+
+        pg.click('[data-play="a1"]'); pg.wait_for_timeout(500)
+        check("list play turns into pause", pg.get_attribute('[data-play="a1"]', "aria-label") == "Pause")
+        pg.click('[data-play="a1"]')
+
+        print("add from video")
+        pg.click('#v-list [data-go="add"]'); pg.wait_for_timeout(200)
+        check("who-heard defaults to the signed-in parent (Alex -> Mama)",
+              pg.get_attribute('[data-heard="Mama"]', "aria-pressed") == "true")
+        pg.set_input_files("#file-in", str(video))
+        pg.wait_for_selector("#c-trim:not([hidden])", timeout=20000); pg.wait_for_timeout(500)
+        check("overview strip visible for a 20 s video", not pg.eval_on_selector("#ov", "e=>e.hidden"))
+        before = pg.inner_text("#sel-len")
+        ov = pg.locator("#ov").bounding_box()
+        pg.mouse.move(ov["x"] + 20, ov["y"] + 18); pg.mouse.down()
+        pg.mouse.move(ov["x"] + 150, ov["y"] + 18, steps=8); pg.mouse.up(); pg.wait_for_timeout(400)
+        after = pg.inner_text("#sel-len")
+        vt = float(pg.eval_on_selector("#vid", "v=>v.currentTime"))
+        check(f"overview drag moves the selection ({before} -> {after})", before != after)
+        check(f"video scrubs with it (t={vt:.2f})", vt > 1)
+        he = pg.locator("#h-end").bounding_box()
+        pg.mouse.move(he["x"] + 22, he["y"] + 40); pg.mouse.down()
+        pg.mouse.move(he["x"] + 80, he["y"] + 40, steps=6); pg.mouse.up(); pg.wait_for_timeout(300)
+        check("end-handle drag lengthens the clip", pg.inner_text("#sel-len") != after)
+        pg.click("#sel-play"); pg.wait_for_timeout(700)
+        check("preview shows the playhead", pg.eval_on_selector("#ph", "e=>!e.hidden"))
+        pg.click("#sel-play")
+        pg.fill("#f-word", "ball"); pg.fill("#f-sounded", "baw"); pg.fill("#f-notes", "Pointing at the ball under the couch")
+        check("keep-video label shows the size", "MB" in pg.inner_text("#keep-label"))
+        pg.screenshot(path=str(OUT / "s2_trim.png"), full_page=True)
+        pg.click("#save")
+        pg.wait_for_selector("#v-detail:not([hidden])", timeout=15000)
+        pg.wait_for_function("() => document.querySelector('first-words-panel').shadowRoot.getElementById('upbar').hidden",
+                             timeout=30000)
+        words = {w["word"]: w for w in json.loads((root / "first-words.json").read_text())["words"]}
+        ball = words.get("ball", {})
+        today = time.strftime("%Y-%m-%d")
+        check("clip saved as a WAV named <date>_ball.wav", ball.get("audioFile") == f"audio/{today}_ball.wav")
+        wav = (root / ball.get("audioFile", "x")).read_bytes() if ball.get("audioFile") else b""
+        check("clip is a real RIFF/WAVE file", wav[:4] == b"RIFF" and wav[8:12] == b"WAVE")
+        check("added_by comes from the HA user", ball.get("addedBy") == "Alex")
+        check("full video uploaded and attached", ball.get("videoFile", "").endswith("_ball.mp4"))
+        check(f"video needed 3+ chunks ({video.stat().st_size} bytes)", video.stat().st_size > 8 * 1024 * 1024)
+        if ball.get("videoFile"):
+            check("uploaded video is byte-identical",
+                  (root / ball["videoFile"]).read_bytes() == video.read_bytes())
+        check("no partial uploads left", not any((root / "video/.partial").glob("*.part")))
+        check("video link visible", pg.eval_on_selector("#d-video-link", "e=>!e.hidden"))
+        check("detail shows position", pg.inner_text("#d-pos") == "Word 3 of 3")
+        check("detail age line", "months" in pg.inner_text("#d-age"))
+        check("event fired", "first_words_added" in dev_state(base)["events"])
+        pg.click("#d-play"); pg.wait_for_timeout(400)
+        pg.screenshot(path=str(OUT / "s3_detail.png"), full_page=True)
+        pg.click("#d-video-link"); pg.wait_for_timeout(800)
+        check("video plays inline via a signed URL",
+              pg.eval_on_selector("#d-video", "v=>!v.hidden && /authSig=/.test(v.src) && v.readyState>=1"))
+
+        print("edit / delete")
+        pg.click("#d-edit"); pg.fill("#e-word", "big ball"); pg.click("#e-save"); pg.wait_for_timeout(500)
+        check("edited word shows", pg.inner_text("#d-word") == "big ball")
+        check("clip renamed on disk", (root / f"audio/{today}_big-ball.wav").exists()
+              and not (root / f"audio/{today}_ball.wav").exists())
+        check("video renamed on disk", (root / f"video/{today}_big-ball.mp4").exists())
+        pg.click("#v-detail [data-go='list']"); pg.wait_for_timeout(200)
+        pg.screenshot(path=str(OUT / "s4_list.png"), full_page=True)
+        pg.click("[data-open='a2']"); pg.wait_for_timeout(200)
+        pg.click("#d-edit"); pg.click("#e-delete")
+        check("delete asks for a second tap", "Tap again" in pg.inner_text("#e-delete"))
+        pg.click("#e-delete"); pg.wait_for_timeout(500)
+        check("deleted word gone from the list", pg.locator("[data-open='a2']").count() == 0)
+        check("deleted record kept in .trash", any((root / ".trash").rglob("word.json")))
+
+        print("saved / exports")
+        pg.click('#v-list [data-go="saved"]'); pg.wait_for_timeout(200)
+        check("saved page shows the share path", "First Words" in pg.inner_text("#s-folder-name"))
+        pg.click("#s-zip"); pg.wait_for_selector("#s-result a", timeout=5000)
+        check("backup zip made", any((root / "exports").glob("*.zip")))
+        pg.click("#s-book"); pg.wait_for_selector("#s-result a", timeout=5000); pg.wait_for_timeout(200)
+        href = pg.get_attribute("#s-result a", "href")
+        check("keepsake link is signed", "authSig=" in (href or ""))
+        pg.screenshot(path=str(OUT / "s5_saved.png"), full_page=True)
+
+        print("offline queue")
+        pg.click('#v-saved [data-go="list"]'); pg.click('#v-list [data-go="add"]'); pg.wait_for_timeout(200)
+        pg.set_input_files("#file-in", str(memo))
+        pg.wait_for_selector("#c-trim:not([hidden])", timeout=10000)
+        pg.fill("#f-word", "up")
+        dev_state(base, fail=1000)  # HA unreachable
+        pg.click("#save")
+        pg.wait_for_selector("#v-detail:not([hidden])", timeout=10000); pg.wait_for_timeout(300)
+        check("toast says it's saved on the phone", "Saved on this phone" in pg.inner_text("#toast"))
+        pg.click("#v-detail [data-go='list']"); pg.wait_for_timeout(200)
+        check("pending chip on the list", pg.locator(".chip.pending").count() == 1)
+        check("banner explains the wait", "waiting to upload" in pg.inner_text("#banner"))
+        pg.screenshot(path=str(OUT / "s6_offline.png"), full_page=True)
+        pg.reload()
+        pg.wait_for_function("() => { const e = document.querySelector('first-words-panel'); "
+                             "return e && e.shadowRoot && e.shadowRoot.querySelectorAll('.chip.pending').length === 1; }",
+                             timeout=10000)
+        check("queued word survives a reload (IndexedDB)", True)
+        check("not on the server yet", "up" not in [w["word"] for w in json.loads((root / "first-words.json").read_text())["words"]])
+        dev_state(base, fail=0)
+        pg.evaluate("window.dispatchEvent(new Event('online'))")
+        pg.wait_for_function("() => document.querySelector('first-words-panel').shadowRoot.querySelectorAll('.chip.pending').length === 0",
+                             timeout=10000)
+        ups = [w for w in json.loads((root / "first-words.json").read_text())["words"] if w["word"] == "up"]
+        check("queued word uploaded exactly once", len(ups) == 1)
+        check("queued word kept its clip", bool(ups and ups[0]["audioFile"].endswith(".wav")))
+        check("banner gone", pg.eval_on_selector("#banner", "e=>e.hidden"))
+        b.close()
+
+    print("not mounted")
+    tmp2 = Path(tempfile.mkdtemp(prefix="fw-ui2-"))
+    start_server(str(tmp2), port + 1, mounted=False)
+    with sync_playwright() as p:
+        b = p.chromium.launch()
+        pg = b.new_page(viewport={"width": 390, "height": 844})
+        pg.on("pageerror", lambda e: errs.append("PAGEERROR " + str(e)))
+        pg.goto(f"http://127.0.0.1:{port + 1}/"); pg.wait_for_timeout(1200)
+        check("banner says the NAS isn't connected", "isn't connected" in pg.inner_text("#banner") and "Test NAS" in pg.inner_text("#banner"))
+        pg.screenshot(path=str(OUT / "s7_unmounted.png"))
+        b.close()
+    check("nothing written when not mounted", not any(tmp2.rglob("first-words.json")))
+
+    check("no console errors: " + "; ".join(errs[:3]), not errs)
+    shutil.rmtree(tmp, ignore_errors=True); shutil.rmtree(tmp2, ignore_errors=True)
+    print(f"\n{len(FAILS)} failed" if FAILS else "\nall passed")
+    return 1 if FAILS else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

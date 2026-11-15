@@ -1,0 +1,68 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "First Words",
+        "description": "Files are saved on a network share mounted in Home Assistant (Settings > System > Storage, usage: Media). The share must be mounted before setup.",
+        "data": {
+          "child_name": "Child's name",
+          "birthday": "Birthday",
+          "people": "People (one per line, Name: label)",
+          "mount_path": "Mounted share",
+          "folder": "Folder inside the share",
+          "storage_name": "What to call the storage in the app",
+          "offsite_note": "Offsite copy note (optional)"
+        },
+        "data_description": {
+          "people": "The name is matched to each person's Home Assistant user; the label is what 'Who heard it' shows, e.g. 'Alex: Mama'.",
+          "mount_path": "Where Home Assistant mounted the share, e.g. /media/FirstWords. Saving is refused whenever this is not a live mount.",
+          "storage_name": "Shown in the app, e.g. 'Saved on the NAS'.",
+          "offsite_note": "Shown under the Save button if the share is backed up elsewhere, e.g. 'copied to Google Drive every night'."
+        }
+      }
+    },
+    "error": {
+      "bad_mount": "Use a path under /media/ or /share/.",
+      "not_mounted": "Nothing is mounted there. Add the share in Settings > System > Storage first.",
+      "bad_folder": "Use a single folder name, without slashes.",
+      "no_people": "Add at least one person."
+    },
+    "abort": {
+      "already_configured": "First Words is already set up."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "First Words",
+        "data": {
+          "child_name": "Child's name",
+          "birthday": "Birthday",
+          "people": "People (one per line, Name: label)",
+          "mount_path": "Mounted share",
+          "folder": "Folder inside the share",
+          "storage_name": "What to call the storage in the app",
+          "offsite_note": "Offsite copy note (optional)"
+        }
+      }
+    },
+    "error": {
+      "bad_mount": "Use a path under /media/ or /share/.",
+      "not_mounted": "Nothing is mounted there. Add the share in Settings > System > Storage first.",
+      "bad_folder": "Use a single folder name, without slashes.",
+      "no_people": "Add at least one person."
+    }
+  },
+  "services": {
+    "export_zip": {"name": "Make a backup zip", "description": "Zips every clip with a CSV and JSON copy of the log into the share's exports folder."},
+    "make_keepsake": {"name": "Make a printable keepsake", "description": "Writes a printable HTML page, oldest word first, into the share's exports folder."},
+    "import_json": {
+      "name": "Import from the Apps Script version",
+      "description": "Imports a first-words.json, or the backup .zip containing one. Words already present are skipped.",
+      "fields": {
+        "source": {"name": "Source", "description": "Path to first-words.json or the backup .zip, as Home Assistant sees it."},
+        "clips": {"name": "Clips", "description": "Optional folder or .zip holding the audio clips, if they are not in the source zip."}
+      }
+    }
+  }
+}
