@@ -517,6 +517,29 @@ def main() -> int:
                    pending: a.S.pending.filter(x => x.type === 'video').length }; }""")
         check(f"cancel clears the bar and forgets the queued video ({st})", st["up"] is None and st["hidden"] and st["pending"] == 0)
         pg.close()
+
+        print("the add button films")
+        pg = b.new_page(viewport={"width": 390, "height": 844}, has_touch=True)
+        pg.goto(base + "/"); pg.wait_for_timeout(800)
+        coarse = pg.evaluate("() => matchMedia('(pointer: coarse)').matches")
+        check("touch page reports a coarse pointer", coarse)
+        with pg.expect_file_chooser(timeout=3000) as fc:
+            pg.click('#v-list [data-go="add"]')
+        el = fc.value.element
+        check("on a phone the add button opens the rear camera for video",
+              el.get_attribute("id") == "cam-in" and el.get_attribute("capture") == "environment" and el.get_attribute("accept") == "video/*")
+        check("with the add screen behind it", pg.locator("#v-add").is_visible())
+        fc.value.set_files(str(tmp / "IMG_livephoto-pcm16le.MOV"))
+        pg.wait_for_selector("#c-trim:not([hidden])", timeout=20000)
+        check("the filmed clip lands in the trimmer", pg.locator("#vid").is_visible())
+        pg.close()
+        pg = b.new_page(viewport={"width": 1200, "height": 900})
+        pg.goto(base + "/"); pg.wait_for_timeout(800)
+        opened = []
+        pg.on("filechooser", lambda f: opened.append(f))
+        pg.click('#v-list [data-go="add"]'); pg.wait_for_timeout(500)
+        check("on a computer it opens the add screen, no file picker", pg.locator("#v-add").is_visible() and not opened)
+        pg.close()
         b.close()
 
     real = [Path(x) for x in os.environ.get("FW_REAL_MOVS", "").split(os.pathsep) if x]

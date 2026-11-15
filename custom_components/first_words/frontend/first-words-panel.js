@@ -11,7 +11,7 @@
  */
 (function () {
 'use strict';
-var VERSION = '0.3.5';
+var VERSION = '0.4.0';
 /* The element is named per version: a browser can't redefine a custom element, so an
  * unversioned name kept the OLD code running in the HA app until a full reload. HA asks
  * for the name matching the installed manifest version (see __init__.py). */
@@ -221,7 +221,7 @@ var HTML = [
 '    <div class="banner" id="banner" hidden role="alert"></div>',
 '    <div id="list"></div>',
 '    <div class="bottombar"><div class="inner">',
-'      <button class="cta" type="button" data-go="add">' + I_MIC + '<span id="cta-label">Said something new</span></button>',
+'      <button class="cta" type="button" data-go="add">' + I_VIDEO + '<span id="cta-label">Said something new</span></button>',
 '      <button class="quick" type="button" data-go="quick">Just add a word · record it later</button>',
 '    </div></div>',
 '  </section>',
@@ -237,10 +237,11 @@ var HTML = [
 '        <button class="recbtn" type="button" id="rec-start" aria-label="Start recording">',
 '          <svg viewBox="0 0 24 24" fill="none" stroke="#1E2A3A" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg>',
 '        </button>',
-'        <span class="tiny">Tap to record</span>',
+'        <span class="tiny">Tap to record sound only</span>',
+'        <label class="ghost" for="cam-in">' + I_VIDEO + 'Record a video</label>',
 '        <label class="ghost" for="file-in">' + I_VIDEO + 'Use a video or voice memo</label>',
 '        <input id="file-in" type="file" accept="video/*,audio/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none">',
-'        <input id="cam-in" type="file" accept="video/*" capture="user" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none">',
+'        <input id="cam-in" type="file" accept="video/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none">',
 '      </div>',
 '      <div id="c-rec" hidden style="width:100%;display:flex;flex-direction:column;align-items:center;gap:14px">',
 '        <span class="status">Recording</span>',
@@ -917,7 +918,13 @@ function show(v) {
 function go(v) {
   stopPlay();
   stopDetailVideo();
-  if (v === 'add') return openAdd('new');
+  if (v === 'add') {
+    openAdd('new');
+    // On a phone the button goes straight to the camera, so every word gets a video.
+    // Backing out of the camera leaves the add screen: sound only, a file, or nothing.
+    if (window.matchMedia && matchMedia('(pointer: coarse)').matches) $('cam-in').click();
+    return;
+  }
   if (v === 'quick') return openAdd('quick');
   if (v === 'saved') { renderSaved(); return show('saved'); }
   if (v === 'list') { leaveAdd(); renderList(); return show('list'); }
