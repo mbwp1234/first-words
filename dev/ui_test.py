@@ -489,6 +489,30 @@ def main() -> int:
         pg.wait_for_function("() => document.querySelector('first-words-panel').shadowRoot.getElementById('upbar').hidden", timeout=30000)
         w = next(x for x in json.loads((root / "first-words.json").read_text())["words"] if x["word"] == "camera-word")
         check(f"video uploads although the offline copy never finishes ({time.time() - t0:.1f}s)", bool(w.get("videoFile")))
+
+        # Home Assistant never answers the start: the bar must count, sit clear of the
+        # header, and cancel must clear it and forget the queued video.
+        pg.route("**/video/*/start", lambda route: None)
+        pg.click('#v-detail [data-go="list"], #v-detail .back') if pg.locator('#v-detail .back').count() else None
+        pg.evaluate("() => document.querySelector('first-words-panel')._app._debug")
+        pg.goto(base + "/"); pg.wait_for_timeout(800)
+        pg.click('#v-list [data-go="add"]'); pg.wait_for_timeout(200)
+        pg.set_input_files("#file-in", str(mov))
+        pg.wait_for_selector("#c-trim:not([hidden])", timeout=20000)
+        pg.fill("#f-word", "hung-word"); pg.click("#save")
+        pg.wait_for_selector("#v-detail:not([hidden])", timeout=20000)
+        pg.wait_for_function("() => /Contacting Home Assistant… [2-9]s/.test(document.querySelector('first-words-panel').shadowRoot.getElementById('up-text').textContent)", timeout=15000)
+        check("stalled start shows a running count", True)
+        bar = pg.locator("#upbar").bounding_box()
+        head = pg.locator("#v-detail button").first.bounding_box()
+        check(f"upload bar sits clear of the header (bar y={bar['y']:.0f}, first button y={head['y']:.0f})",
+              bar["y"] > head["y"] + head["height"])
+        check("bar is at the bottom of the screen", bar["y"] + bar["height"] > 844 - 120)
+        pg.click("#up-cancel"); pg.wait_for_timeout(300)
+        st = pg.evaluate("""() => { const a = document.querySelector('first-words-panel')._app._debug;
+          return { up: a.S.upload, hidden: document.querySelector('first-words-panel').shadowRoot.getElementById('upbar').hidden,
+                   pending: a.S.pending.filter(x => x.type === 'video').length }; }""")
+        check(f"cancel clears the bar and forgets the queued video ({st})", st["up"] is None and st["hidden"] and st["pending"] == 0)
         pg.close()
         b.close()
 

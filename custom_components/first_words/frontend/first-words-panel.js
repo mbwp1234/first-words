@@ -11,7 +11,7 @@
  */
 (function () {
 'use strict';
-var VERSION = '0.3.2';
+var VERSION = '0.3.3';
 /* The element is named per version: a browser can't redefine a custom element, so an
  * unversioned name kept the OLD code running in the HA app until a full reload. HA asks
  * for the name matching the installed manifest version (see __init__.py). */
@@ -173,7 +173,7 @@ var CSS = [
 '.dlg .action.warn{color:var(--danger)}',
 '.danger{height:48px;border-radius:14px;border:1px solid #E5C4C0;background:#fff;color:var(--danger);font-weight:600}',
 '.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(110px + var(--safe-b));background:var(--ink);color:#fff;padding:12px 16px;border-radius:14px;font-size:14px;max-width:calc(100% - 32px);z-index:20;box-shadow:0 6px 24px rgba(0,0,0,.2);font-family:Inter,system-ui,sans-serif}',
-'.upbar{position:fixed;left:12px;right:12px;top:12px;z-index:15;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:12px 14px;box-shadow:0 6px 24px rgba(0,0,0,.12);display:flex;flex-direction:column;gap:8px;font-size:14px;max-width:496px;margin:0 auto;font-family:Inter,system-ui,sans-serif}',
+'.upbar{position:fixed;left:12px;right:12px;bottom:calc(12px + var(--up-lift, 0px) + var(--safe-b));z-index:15;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:12px 14px;box-shadow:0 6px 24px rgba(0,0,0,.12);display:flex;flex-direction:column;gap:8px;font-size:14px;max-width:496px;margin:0 auto;font-family:Inter,system-ui,sans-serif}',
 '.upbar .bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden}',
 '.upbar .bar i{display:block;height:100%;width:0;background:var(--gold);transition:width .3s}',
 '.upbar .row{display:flex;justify-content:space-between;align-items:center;gap:8px}',
@@ -391,7 +391,7 @@ var HTML = [
 '  </form>',
 '</dialog>',
 '<div class="upbar" id="upbar" hidden role="status">',
-'  <div class="row"><span id="up-text">Saving video…</span><button class="linkbtn" type="button" id="up-retry" hidden>Retry</button></div>',
+'  <div class="row"><span id="up-text">Saving video…</span><span class="row"><button class="linkbtn" type="button" id="up-retry" hidden>Retry</button><button class="linkbtn" type="button" id="up-cancel">Cancel</button></span></div>',
 '  <div class="bar"><i id="up-fill"></i></div>',
 '</div>',
 '<div class="toast" id="toast" hidden role="status"></div>'
@@ -906,6 +906,7 @@ function show(v) {
   ['list', 'add', 'detail', 'saved'].forEach(function (n) { $('v-' + n).hidden = n !== v; });
   S.view = v;
   $('scroller').scrollTop = 0;
+  if (!$('upbar').hidden) liftUp();
 }
 function go(v) {
   stopPlay();
@@ -1864,8 +1865,24 @@ function flushQueue() {
 }
 
 /* ---- video upload, in chunks, after the word is safely saved */
+function liftUp() {
+  // Sit above the open view's bottom bar (the list's add button), never over its header.
+  var lift = 0;
+  root.querySelectorAll('.bottombar').forEach(function (b) { if (b.offsetParent !== null) lift = Math.max(lift, b.offsetHeight); });
+  $('upbar').style.setProperty('--up-lift', lift + 'px');
+}
+/* Upload steps go to HA's own log over the websocket — a different road from the fetch
+ * that carries the upload — so a stall on the phone can be read from the server side. */
+function diag(msg) {
+  try {
+    host.hass.callService('system_log', 'write', { level: 'warning', logger: 'first_words.panel',
+      message: 'v' + VERSION + ' ' + msg + ' [secure=' + window.isSecureContext + ' online=' + navigator.onLine + ']' })
+      .catch(function () {});
+  } catch (e) {}
+}
 function setUp(frac, text) {
   $('upbar').hidden = false;
+  liftUp();
   $('up-fill').style.width = Math.round(frac * 100) + '%';
   $('up-text').textContent = text || ('Saving video ' + Math.round(frac * 100) + '% · keep this open');
 }
@@ -1883,11 +1900,25 @@ function forgetVideo(wordId) {
   return Q.del(key).catch(function () {});
 }
 function uploadVideo(file, wordId, token, done) {
-  S.upload = { file: file, wordId: wordId, token: token || '' };
+  var up = S.upload = { file: file, wordId: wordId, token: token || '' };
+  var t0 = Date.now(), stage = 'queue', ticker = 0;
+  var secs = function () { return Math.round((Date.now() - t0) / 1000); };
+  var live = function () { if (S.upload !== up) { var e = new Error('cancelled'); e.cancelled = true; throw e; } };
+  var step = function (name) { stage = name; diag('upload ' + wordId + ': ' + name + ' at ' + secs() + 's (' + mb(file.size) + ', ' + (file.type || 'no type') + ')'); };
   $('up-retry').hidden = true;
   setUp(0, 'Starting video upload…');
+  step('start');
   var offset = 0, tries = 0;
   function begin() {
+    live();
+    step('contacting');
+    var c0 = Date.now();
+    clearInterval(ticker);
+    ticker = setInterval(function () {
+      if (S.upload !== up || stage !== 'contacting') return clearInterval(ticker);
+      var w = Math.round((Date.now() - c0) / 1000);
+      setUp(0, 'Contacting Home Assistant… ' + w + 's');
+    }, 1000);
     setUp(0, 'Contacting Home Assistant…');
     if (S.upload.token) {
       return req('GET', '/upload/' + S.upload.token).then(function (r) { offset = r.received; }, function (e) {
@@ -1897,9 +1928,11 @@ function uploadVideo(file, wordId, token, done) {
     }
     return jsonReq('POST', '/video/' + encodeURIComponent(wordId) + '/start',
       { name: file.name || 'video.mp4', mime: file.type || 'video/mp4', size: file.size })
-      .then(function (r) { S.upload.token = r.token; rememberVideo(file, wordId, r.token); });
+      .then(function (r) { live(); S.upload.token = r.token; rememberVideo(file, wordId, r.token); });
   }
   function next() {
+    live();
+    if (stage === 'contacting') { clearInterval(ticker); step('sending'); }
     if (offset >= file.size) return req('POST', '/upload/' + S.upload.token + '/finish');
     var end = Math.min(file.size, offset + CHUNK);
     return req('PUT', '/upload/' + S.upload.token + '?offset=' + offset, file.slice(offset, end),
@@ -1923,12 +1956,18 @@ function uploadVideo(file, wordId, token, done) {
     .then(begin)
     .then(next)
     .then(function (r) {
+      live();
+      clearInterval(ticker);
+      step('done');
       S.upload = null;
       $('upbar').hidden = true;
       if (r && r.word) replaceWord(r.word);
       return forgetVideo(wordId).then(function () { toast('Video saved'); });
     })
     .catch(function (e) {
+      clearInterval(ticker);
+      if (e.cancelled) return;
+      diag('upload ' + wordId + ': FAILED during ' + stage + ' at ' + secs() + 's: ' + (e.message || e) + (e.status ? ' (HTTP ' + e.status + ')' : ''));
       setUp(file.size ? offset / file.size : 0, 'Video upload stopped. ' + (e.message || ''));
       $('up-retry').hidden = false;
     })
@@ -1936,6 +1975,15 @@ function uploadVideo(file, wordId, token, done) {
 }
 $('up-retry').addEventListener('click', function () {
   if (S.upload) uploadVideo(S.upload.file, S.upload.wordId, S.upload.token);
+});
+$('up-cancel').addEventListener('click', function () {
+  var up = S.upload;
+  S.upload = null;  // the running upload sees this at its next step and stands down
+  $('upbar').hidden = true;
+  if (!up) return;
+  diag('upload ' + up.wordId + ': cancelled by the user');
+  forgetVideo(up.wordId).then(function () { renderBanner(); });
+  toast('Video upload cancelled. Attach it again from Edit → Recording & video.', 5000);
 });
 
 /* ================================================================ detail */
