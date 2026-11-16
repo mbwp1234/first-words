@@ -11,7 +11,7 @@
  */
 (function () {
 'use strict';
-var VERSION = '0.4.0';
+var VERSION = '0.5.0';
 /* The element is named per version: a browser can't redefine a custom element, so an
  * unversioned name kept the OLD code running in the HA app until a full reload. HA asks
  * for the name matching the installed manifest version (see __init__.py). */
@@ -194,6 +194,57 @@ var CSS = [
 '  .empty{max-width:520px;margin:64px auto}',
 '  .bottombar .inner{max-width:420px}',
 '  .dword{font-size:88px}',
+'}',
+'',
+'/* ---- 0.5: the shared house kit (Kitchen, Climate) — one font, fills not outlines ---- */',
+':host{--bg:#FBF6EE;--line:#F1ECE2;--gold:#F0A23B;--gold-soft:#FBE7C6;--display:Inter,system-ui,-apple-system,sans-serif}',
+'.eyebrow{letter-spacing:0;text-transform:none}',
+'.hero h1{font-size:34px;letter-spacing:-.02em}',
+'.icon-btn.ring{border:0}',
+'.summary{margin:16px 16px 0;padding:18px 20px;border-radius:20px;background:var(--card);display:flex;align-items:center;gap:16px}',
+'.sum-n{font:800 56px/1 var(--display);letter-spacing:-.04em;font-variant-numeric:tabular-nums}',
+'.sum-tx{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}',
+'.sum-tx b{font-size:17px}.sum-tx span{font-size:13px;color:var(--muted)}',
+'.sum-bars{display:flex;align-items:flex-end;gap:4px;height:40px}',
+'.sum-bars i{width:8px;border-radius:3px;background:var(--gold-soft)}',
+'.sum-bars i.cur{background:var(--gold)}.sum-bars i.zero{background:var(--line2)}',
+'.month{display:flex;justify-content:space-between;font-size:15px;font-weight:700;color:var(--ink);margin:22px 24px 8px}',
+'.words{background:var(--card);border-radius:20px;gap:0;overflow:hidden}',
+'.wcard{border:0;border-radius:0;background:none;padding:10px 14px 10px 12px}',
+'.wcard+.wcard{border-top:1px solid var(--line)}',
+'.wword{font-weight:700;font-size:20px}',
+'.play{background:var(--gold)}.play svg{fill:var(--ink)}',
+'.play.cap{background:none;border:1.5px dashed #D9CBB0}',
+'.bottombar{border-top:0;background:linear-gradient(rgba(251,246,238,0),var(--bg) 28%)}',
+'.cta{font-weight:700}',
+'.quick{text-decoration:none}',
+'.field input,.field textarea{border:0}',
+'.field input.big{border:2px solid var(--gold);height:60px;font-size:26px;font-weight:800;letter-spacing:-.01em}',
+'.seg{background:#EFE8DA;border-radius:14px;padding:3px;gap:0}',
+'.seg button{border:0;background:none;border-radius:11px;height:40px;color:#5B5446}',
+'.seg button[aria-pressed="true"]{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(30,36,51,.1)}',
+'.datechips{display:flex;gap:8px;flex-wrap:wrap}',
+'.datechips button,.dpick{height:40px;padding:0 16px;border:0;border-radius:999px;background:var(--card);font-size:15px;font-weight:600;color:var(--ink);display:inline-flex;align-items:center;position:relative}',
+'.datechips button[aria-pressed="true"],.dpick.on{background:var(--ink);color:#fff}',
+'.dpick input{position:absolute;inset:0;opacity:0;width:100%;height:100%;border:0;padding:0;cursor:pointer}',
+'.toggle{border:0}',
+'.dcard{border:0;border-radius:24px;gap:18px}',
+'.facts{display:block}',
+'.facts>div{display:flex;justify-content:space-between;gap:12px;padding:11px 0;border-top:1px solid var(--line)}',
+'.facts>div:first-child{border-top:0}',
+'.facts dt{font-size:15px;font-weight:500;color:var(--muted)}',
+'.facts dd{margin:0;font-size:15px;font-weight:600;text-align:right}',
+'.linkcard{border:0}',
+'#d-audio-link{background:none;padding:6px 8px;margin-top:10px;gap:8px}',
+'#d-audio-link .ic{width:20px;height:20px;flex-basis:20px;background:none}',
+'#d-audio-link .ic svg{width:16px;height:16px}',
+'#d-audio-link b{font-size:13px;font-weight:600;color:var(--teal-ink)}',
+'#d-audio-link small{display:none}',
+'.action,.folder{border:0}',
+'@container fw (min-width: 760px){',
+'  .summary{margin:16px 24px 0}',
+'  .words{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:0 20px;padding:0 6px}',
+'  .wcard+.wcard{border-top:0}.wcard{border-bottom:1px solid var(--line)}',
 '}'
 ].join('\n');
 
@@ -219,6 +270,7 @@ var HTML = [
 '      </button>',
 '    </div>',
 '    <div class="banner" id="banner" hidden role="alert"></div>',
+'    <div id="summary"></div>',
 '    <div id="list"></div>',
 '    <div class="bottombar"><div class="inner">',
 '      <button class="cta" type="button" data-go="add">' + I_VIDEO + '<span id="cta-label">Said something new</span></button>',
@@ -277,13 +329,18 @@ var HTML = [
 '      <label class="field"><span id="f-word-lbl">What did they say?</span>',
 '        <input id="f-word" class="big" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="60">',
 '      </label>',
-'      <div class="grid2">',
+'      <div>',
 '        <label class="field">How it sounded',
 '          <input id="f-sounded" type="text" autocomplete="off" autocapitalize="none" placeholder="e.g. baw" maxlength="60">',
 '        </label>',
-'        <label class="field">Date',
-'          <input id="f-date" type="date">',
-'        </label>',
+'      </div>',
+'      <div class="field" role="group" aria-labelledby="date-lbl">',
+'        <span id="date-lbl">When</span>',
+'        <div class="datechips" id="date-chips">',
+'          <button type="button" data-ago="0">Today</button>',
+'          <button type="button" data-ago="1">Yesterday</button>',
+'          <label class="dpick"><span>Another day</span><input id="f-date" type="date" aria-label="Pick a date"></label>',
+'        </div>',
 '      </div>',
 '      <div class="field" role="group" aria-labelledby="heard-lbl">',
 '        <span id="heard-lbl">Who heard it</span>',
@@ -324,10 +381,10 @@ var HTML = [
 '        <span class="tx"><b>Capture it</b><small id="d-capture-sub">Record it, or pull it from a video</small></span>',
 '      </button>',
 '      <dl class="facts">',
-'        <div><dt>Date</dt><dd id="d-date"></dd></div>',
-'        <div><dt>Heard by</dt><dd id="d-heard"></dd></div>',
+'        <div><dt>Said on</dt><dd id="d-date"></dd></div>',
 '        <div id="d-age-wrap"><dt id="d-age-lbl">Age</dt><dd id="d-age"></dd></div>',
-'        <div><dt>Added by</dt><dd id="d-added"></dd></div>',
+'        <div><dt>Heard by</dt><dd id="d-heard"></dd></div>',
+'        <div hidden><dt>Added by</dt><dd id="d-added"></dd></div>',
 '      </dl>',
 '      <div id="d-notes-wrap"><div class="lbl">Notes</div><p class="notes" id="d-notes"></p></div>',
 '    </div>',
@@ -1031,12 +1088,61 @@ function renderBanner() {
     b.hidden = true;
   }
 }
+function isoAgo(days) {
+  var d = new Date(); d.setDate(d.getDate() - days);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function syncDateChips() {
+  var v = $('f-date').value, hit = false;
+  $('date-chips').querySelectorAll('[data-ago]').forEach(function (b) {
+    var on = v === isoAgo(+b.getAttribute('data-ago'));
+    b.setAttribute('aria-pressed', on ? 'true' : 'false'); hit = hit || on;
+  });
+  var pick = $('date-chips').querySelector('.dpick');
+  pick.classList.toggle('on', !hit && !!v);
+  pick.querySelector('span').textContent = !hit && v ? fmtDate(v, { month: 'short', day: 'numeric' }) : 'Another day';
+}
+$('date-chips').addEventListener('click', function (e) {
+  var b = e.target.closest('[data-ago]');
+  if (!b) return;
+  $('f-date').value = isoAgo(+b.getAttribute('data-ago'));
+  syncDateChips();
+});
+$('f-date').addEventListener('input', syncDateChips);
+$('f-date').addEventListener('change', syncDateChips);
+// The count, the age and this month: arithmetic nobody wants to do by scrolling.
+// A month with no new words says so; it is not drawn as an empty bar.
+function renderSummary() {
+  var el = $('summary'), n = S.words.length;
+  if (!S.loaded || !n) { el.innerHTML = ''; return; }
+  var now = new Date(), months = [];
+  for (var i = 3; i >= 0; i--) {
+    var d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    var key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+    months.push({ key: key, label: fmtDate(key + '-01', { month: 'long' }),
+      n: S.words.filter(function (w) { return String(w.date || '').slice(0, 7) === key; }).length });
+  }
+  var max = Math.max.apply(null, months.map(function (m) { return m.n; })) || 1;
+  var cur = months[3], age = ageText(todayStr()).split(',')[0];
+  var line = (age ? 'at ' + age + ' · ' : '') +
+    (cur.n ? cur.n + ' new in ' + cur.label : 'no new words in ' + cur.label + ' yet');
+  el.innerHTML = '<section class="summary">' +
+    '<div class="sum-n">' + n + '</div>' +
+    '<div class="sum-tx"><b>' + (n === 1 ? 'word' : 'words') + ' so far</b><span>' + esc(line) + '</span></div>' +
+    '<div class="sum-bars" role="img" aria-label="' + esc(months.map(function (m) { return m.label + ' ' + m.n; }).join(', ')) + '">' +
+      months.map(function (m, i) {
+        return '<i class="' + (i === 3 ? 'cur' : '') + (m.n ? '' : ' zero') + '" style="height:' + (m.n ? Math.max(6, Math.round(m.n / max * 40)) : 3) + 'px"></i>';
+      }).join('') +
+    '</div></section>';
+}
 function renderList() {
   var list = $('list');
   renderBanner();
+  renderSummary();
   if (!S.loaded) { $('list-sub').textContent = 'Loading…'; list.innerHTML = ''; return; }
   var n = S.words.length;
-  $('list-sub').textContent = n ? n + (n === 1 ? ' word' : ' words') + ' so far · newest first' : 'No words yet';
+  $('list-sub').textContent = n ? '' : 'No words yet';
+  $('list-sub').hidden = !!n;
   if (!n) {
     list.innerHTML = '<div class="empty"><strong>Listening…</strong>When ' + esc(C.child || 'they') + ' says a word, tap the button below to record it or pull the sound from a video. Words from before? Use “Just add a word” and capture them later.</div>';
     return;
@@ -1112,7 +1218,7 @@ function openAdd(kind, wordId) {
   if ((kind === 'attach' || kind === 'recut' || kind === 'vtrim') && !w) kind = 'new';
   A.kind = kind; A.target = w ? w.id : null;
   $('f-word').value = ''; $('f-sounded').value = ''; $('f-notes').value = '';
-  $('f-date').value = todayStr(); $('f-date').max = todayStr();
+  $('f-date').value = todayStr(); $('f-date').max = todayStr(); syncDateChips();
   var p = me();
   A.heard = p ? p.label : (C.people[0] ? C.people[0].label : '');
   $('f-heard-other').value = ''; renderHeard();
@@ -2066,7 +2172,7 @@ function renderDetail() {
     $('d-saved-title').textContent = w._pending ? 'Saved on this phone' : 'Recording saved on this phone';
     $('d-audio-name').textContent = 'Uploads to ' + nas() + ' when Home Assistant is reachable';
   } else {
-    $('d-saved-title').textContent = 'Saved on ' + nas();
+    $('d-saved-title').textContent = 'Saved on ' + nas() + (w.addedBy ? ' · added by ' + w.addedBy : '');
     $('d-audio-name').textContent = w.audioFile ? folder + ' / ' + w.audioFile.replace('/', ' / ') : 'Details saved in the First Words log';
   }
   $('d-video-link').hidden = !w.videoFile;

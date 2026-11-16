@@ -126,10 +126,10 @@ def main() -> int:
         pg.on("pageerror", lambda e: errs.append("PAGEERROR " + str(e)))
         pg.goto(base + "/")
         pg.wait_for_function("() => { const e = document.querySelector('first-words-panel'); "
-                             "return e && e.shadowRoot && /words? so far/.test(e.shadowRoot.getElementById('list-sub').textContent); }",
+                             "return e && e.shadowRoot && /words? so far/.test(e.shadowRoot.getElementById('summary').textContent); }",
                              timeout=10000)
         print("list")
-        check("list sub shows 2 words", "2 words so far" in pg.inner_text("#list-sub"))
+        check("summary shows 2 words", pg.inner_text("#summary .sum-n").strip() == "2" and "words so far" in pg.inner_text("#summary"))
         check("title is the child's name", pg.inner_text("#list-title") == "Robin")
         check("CTA uses the child's name", pg.inner_text("#cta-label") == "Robin said something new")
         check("first-word badge on the oldest", pg.locator(".chip.first").count() == 1)
@@ -380,7 +380,7 @@ def main() -> int:
         b = p.chromium.launch()
         pg = b.new_page(viewport={"width": 390, "height": 844}, device_scale_factor=2)
         pg.goto(base + "/?top=59")
-        pg.wait_for_function("() => /so far/.test(document.querySelector('first-words-panel').shadowRoot.getElementById('list-sub').textContent)", timeout=10000)
+        pg.wait_for_function("() => /so far/.test(document.querySelector('first-words-panel').shadowRoot.getElementById('summary').textContent)", timeout=10000)
         pg.wait_for_timeout(400)
         hero = pg.locator("#v-list .hero").bounding_box()
         bb = pg.locator("#v-list .bottombar").bounding_box()
@@ -389,7 +389,7 @@ def main() -> int:
         pg.screenshot(path=str(OUT / "s8_phone_offset.png"))
         pg = b.new_page(viewport={"width": 1280, "height": 800})
         pg.goto(base + "/?side=256")
-        pg.wait_for_function("() => /so far/.test(document.querySelector('first-words-panel').shadowRoot.getElementById('list-sub').textContent)", timeout=10000)
+        pg.wait_for_function("() => /so far/.test(document.querySelector('first-words-panel').shadowRoot.getElementById('summary').textContent)", timeout=10000)
         pg.wait_for_timeout(400)
         cards = pg.locator(".wcard")
         xs = sorted({round(cards.nth(i).bounding_box()["x"]) for i in range(cards.count())})
